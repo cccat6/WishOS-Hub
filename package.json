@@ -1,0 +1,35 @@
+{
+  "name": "agentic-notes-hub",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "test": "npm run build && tsx --test test/*.test.ts",
+    "simulate": "tsx tools/simulate.ts",
+    "mcp": "node dist/hardware-mcp.js",
+    "format": "prettier --write src test tools *.json",
+    "format:check": "prettier --check src test tools *.json",
+    "launch": "node dist/launch.js",
+    "os-bridge": "node dist/os-remote-runner.js",
+    "mcp:hardware": "node dist/hardware-mcp.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@resvg/resvg-js": "^2.6.2",
+    "https-proxy-agent": "^7.0.6",
+    "ws": "^8.18.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "@types/ws": "^8.5.14",
+    "prettier": "3.6.2",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

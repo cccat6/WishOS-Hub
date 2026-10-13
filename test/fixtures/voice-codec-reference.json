@@ -1,0 +1,13 @@
+{
+  "generator": "tests/voice_codec_test.cpp",
+  "signal": "1000 Hz sine, peak 2000, mono 16000 Hz",
+  "packets": 10,
+  "samples_per_packet": 1280,
+  "reference_decoder": "ffmpeg version 7.1 Copyright (c) 2000-2024 the FFmpeg developers",
+  "reference_container": "IMA WAV blocks include predictor as an initial sample; tests skip that sample for each independent wire packet",
+  "sha256": {
+    "voice-codec-fixture.bin": "87bd17b93650675d4a8274dad0cec964d2e5127f46270af620846589ee20b21d",
+    "voice-codec-reference.pcm": "fba7a5ce0a10b9903ee2900c403914b862b33803c3a9199be4532d289980760f",
+    "voice-codec-ffmpeg.pcm": "44a6899cc128312b674003952e9887f588f652e2c9abb3d9c81dac47afea1c43"
+  }
+}
