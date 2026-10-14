@@ -172,7 +172,7 @@ test('official MCP client -> stdio bridge -> queued Hub command -> device receip
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [fileURLToPath(new URL('../dist/mcp.js', import.meta.url))],
-    env: { NOTES_HUB_URL: s.url, NOTES_ADMIN_TOKEN: admin },
+    env: { NOTES_PROTOCOL: 'notes', NOTES_HUB_URL: s.url, NOTES_ADMIN_TOKEN: admin },
     stderr: 'pipe',
   });
   try {
@@ -434,12 +434,25 @@ test('empty device token accepts header-free connection and streaming capabiliti
   const w = new WebSocket(s.ws);
   const inbox: any[] = [];
   try {
-    w.on('message', b => inbox.push(JSON.parse(b.toString())));
+    w.on('message', (b) => inbox.push(JSON.parse(b.toString())));
     await once(w, 'open');
     const greeting = hello();
-    w.send(JSON.stringify({...greeting, capabilities: {...greeting.capabilities, streaming_images: true, max_stream_bytes: 180000}}));
-    await until(() => inbox.some(m => m.type === 'welcome'));
+    w.send(
+      JSON.stringify({
+        ...greeting,
+        capabilities: {
+          ...greeting.capabilities,
+          streaming_images: true,
+          max_stream_bytes: 180000,
+        },
+      }),
+    );
+    await until(() => inbox.some((m) => m.type === 'welcome'));
     assert.equal(s.h.state('a').online, true);
     assert.equal((await fetch(s.url + '/api/devices')).status, 401);
-  } finally { w.terminate(); await s.h.close(); s.store.close(); }
+  } finally {
+    w.terminate();
+    await s.h.close();
+    s.store.close();
+  }
 });

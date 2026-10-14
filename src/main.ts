@@ -66,6 +66,7 @@ const Config = z
             id: Id,
             tokenEnv: z.string().default('NOTES_DEVICE_TOKEN'),
             connection: z.enum(['active', 'passive']).default('active'),
+            protocol: z.enum(['wishos', 'notes']).default('wishos'),
             deviceUrl: z.string().url().optional(),
             harness: Runtime.default({ kind: 'mock' }),
             triggers: z
@@ -79,6 +80,18 @@ const Config = z
       )
       .max(8)
       .default([]),
+    audioLimits: z
+      .object({
+        compressed_bytes: z.number().int().positive(),
+        decoded_bytes: z.number().int().positive(),
+        streams_per_device: z.number().int().positive(),
+        idle_ms: z.number().int().positive(),
+        total_bytes: z.number().int().positive(),
+        failed_ttl_ms: z.number().int().positive(),
+      })
+      .partial()
+      .strict()
+      .optional(),
     speech: SpeechConfig.optional(),
     asr: z.object({ url: z.string().url(), tokenEnv: z.string().optional() }).strict().optional(),
   })
@@ -119,9 +132,7 @@ const devices = c.devices.map((d, index) => {
               `http://127.0.0.1:${c.port}/mcp`,
               c.adminTokenEnv,
               readFileSync(
-                fileURLToPath(
-                  new URL('../skills/agentic-notes/SKILL.md', import.meta.url),
-                ),
+                fileURLToPath(new URL('../skills/agentic-notes/SKILL.md', import.meta.url)),
                 'utf8',
               ),
               h.threadOptions,
@@ -146,8 +157,9 @@ const devices = c.devices.map((d, index) => {
       throw Error('deviceUrl must be an HTTP(S) origin');
   }
   return {
-    ...(d.connection === 'passive' ? { deviceUrl: d.deviceUrl } : {}),
+    ...(d.deviceUrl ? { deviceUrl: d.deviceUrl } : {}),
     id: d.id,
+    protocol: d.protocol,
     sessionId: h.sessionId,
     token: process.env[d.tokenEnv] ?? '',
     adapter,
@@ -157,6 +169,7 @@ const devices = c.devices.map((d, index) => {
 const hub = new Hub({
   devices,
   store,
+  audioLimits: c.audioLimits,
   allowPowerCommands:
     process.env.NOTES_DISABLE_POWER_COMMANDS === '1' ? false : (c.allowPowerCommands ?? true),
   discoveryToken: c.discoverDevices ? secret(c.discoveryTokenEnv) : undefined,

@@ -155,7 +155,7 @@ test('MCP image URL produces a valid native raster; HTML and ambiguous sources n
   const client = new Client({ name: 'image-source-test', version: '1' });
   try {
     await client.connect(
-      new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`)),
+      new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp/notes`)),
     );
     const inspected: any = await client.callTool({
       name: 'inspect_image',

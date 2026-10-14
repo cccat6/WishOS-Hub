@@ -1,3 +1,8 @@
+import { OsRpcSocket } from './os-rpc-socket.js';
+import { OsRemoteBridge, deviceRpc, type DeviceRpc, type RemoteHandler } from './os-remote.js';
+import { SqlRemoteJournal } from './os-journal.js';
+import { voiceRoute } from './os-voice-route.js';
+import { OsAudioIngress, AudioLimits, type AudioConfig } from './os-audio-ingress.js';
 import { speechPage } from './speech-page.js';
 import { SpeechSettings } from './speech.js';
 import { landing } from './landing.js';
@@ -7,7 +12,7 @@ import { NotesMcpHttp } from './mcp-http.js';
 import { hubApi } from './hub-api.js';
 import { rasterFormat } from './raster.js';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { timingSafeEqual, randomUUID } from 'node:crypto';
+import { timingSafeEqual, randomUUID, createHash } from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import { ZodError } from 'zod';
 import { DeviceMessage, CommandRequest, SessionInput, MAX_WIRE, HttpError } from './protocol.js';
@@ -21,6 +26,7 @@ export interface DeviceConfig {
   token: string;
   adapter: HarnessAdapter;
   deviceUrl?: string;
+  protocol?: 'wishos' | 'notes';
   sessionId?: string;
   triggers?: Partial<Record<string, string>>;
 }
@@ -30,6 +36,7 @@ export interface HubOptions {
   store: Store;
   asr?: Asr;
   speech?: unknown;
+  audioLimits?: Partial<typeof AudioLimits>;
   allowPowerCommands?: boolean;
   discoveryToken?: string;
 }
@@ -103,13 +110,29 @@ export class Hub {
   private busy = new Map<string, string>();
   private foreground = new Map<string, ForegroundRun>();
   private voiceLanes = new Map<string, VoiceLane>();
+  private osPeers = new Map<
+    string,
+    {
+      rpc: DeviceRpc;
+      bridge: OsRemoteBridge;
+      socket?: OsRpcSocket;
+      boot: string;
+      online: boolean;
+      timer: NodeJS.Timeout;
+      abort: AbortController;
+    }
+  >();
+  private osAudio: OsAudioIngress;
+  private osVoiceBindings = new Map<string, VoiceLane>();
   private voiceResults = new Map<
     string,
     { run: string; text: string; since: number; version: number }
   >();
   private voiceVersion = new Map<string, number>();
   private agentBusy(id: string) {
-    return this.busy.has(id) || (this.voiceLanes.get(id)?.pending ?? 0) > 0;
+    return (
+      this.busy.has(id) || (this.voiceLanes.get(id)?.pending ?? 0) > 0 || this.osAudio.pending(id)
+    );
   }
   private publishAgentState(id: string) {
     const peer = this.peers.get(id);
@@ -140,6 +163,11 @@ export class Hub {
       throw new Error('invalid Hub token');
     this.devices = new Map(options.devices.map((d) => [d.id, d]));
     this.speech = new SpeechSettings(options.store, options.speech, options.asr);
+    this.osAudio = new OsAudioIngress(
+      options.store.db,
+      (device, id, wav, config, signal) => this.submitOsAudio(device, id, wav, config, signal),
+      options.audioLimits,
+    );
     if (
       this.devices.size !== options.devices.length ||
       options.devices.some(
@@ -157,7 +185,7 @@ export class Hub {
     }
     this.passive = new PassiveDevices(
       options.devices
-        .filter((d) => d.deviceUrl)
+        .filter((d) => d.deviceUrl && d.protocol !== 'wishos')
         .map((d) => ({ id: d.id, url: d.deviceUrl!, token: d.token })),
       options.store,
     );
@@ -175,7 +203,7 @@ export class Hub {
             : undefined);
       if (
         this.stopping ||
-        url.pathname !== '/device' ||
+        !['/device', '/os/device'].includes(url.pathname) ||
         !d ||
         d.deviceUrl ||
         (d.token.length > 0 && !equal(req.headers.authorization ?? '', `Bearer ${d.token}`)) ||
@@ -184,10 +212,86 @@ export class Hub {
         socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
         return;
       }
-      this.ws.handleUpgrade(req, socket, head, (ws) => this.connect(d, ws));
+      this.ws.handleUpgrade(req, socket, head, (ws) => {
+        if (url.pathname === '/os/device') {
+          const peer = new OsRpcSocket(ws);
+          const timeout = setTimeout(() => ws.close(1008, 'hello required'), 10000);
+          peer.once('ready', () => {
+            clearTimeout(timeout);
+            this.attachOs(d, peer.rpc, peer);
+          });
+          peer.once('closed', () => clearTimeout(timeout));
+        } else this.connect(d, ws);
+      });
     });
+    for (const d of options.devices)
+      if (d.deviceUrl && d.protocol === 'wishos') this.attachOs(d, deviceRpc(d.deviceUrl));
     this.timer = setInterval(() => this.tick(), 1000);
     this.timer.unref();
+  }
+  private attachOs(d: DeviceConfig, rpc: DeviceRpc, socket?: OsRpcSocket) {
+    const old = this.osPeers.get(d.id);
+    if (old) {
+      old.abort.abort();
+      old.bridge.close();
+      clearInterval(old.timer);
+      old.socket?.socket.close();
+    }
+    const bound: DeviceRpc = async (p, m, a) => {
+      try {
+        const result = await rpc(p, m, a);
+        const current = this.osPeers.get(d.id);
+        if (current?.rpc === bound) {
+          current.online = true;
+          current.boot = result.boot_id;
+        }
+        return result;
+      } catch (error) {
+        const current = this.osPeers.get(d.id);
+        if (current?.rpc === bound) current.online = false;
+        throw error;
+      }
+    };
+    const agent: RemoteHandler = async (r) => {
+      const run = this.startRun(d.id, { ...r.payload, request_id: r.request_id });
+      return { state: 'accepted', run_id: run.id };
+    };
+    agent.replaySafe = true;
+    const handlers: Record<string, RemoteHandler> = {
+      agent,
+      voice: voiceRoute(bound, async (id, action, args) => {
+        if (action === 'begin') return this.beginOsAudio(d.id, id, args as AudioConfig);
+        if (action === 'chunks') return this.osAudio.append(d.id, id, args!.chunks as any);
+        if (action === 'finish') return this.osAudio.finish(d.id, id, args as any);
+        return this.osAudio.status(d.id, id);
+      }),
+    };
+    const bridge = new OsRemoteBridge(bound, handlers, {
+        journal: new SqlRemoteJournal(this.options.store.db, d.id),
+      }),
+      abort = new AbortController();
+    const timer = setInterval(() => {
+      if (!this.stopping) void bridge.poll(abort.signal).catch(() => {});
+    }, 100);
+    timer.unref();
+    const entry = {
+      rpc: bound,
+      bridge,
+      socket,
+      boot: socket?.boot ?? '',
+      online: !!socket,
+      timer,
+      abort,
+    };
+    this.osPeers.set(d.id, entry);
+    socket?.once('closed', () => {
+      if (this.osPeers.get(d.id) !== entry) return;
+      entry.online = false;
+      abort.abort();
+      bridge.close();
+      clearInterval(timer);
+      this.osPeers.delete(d.id);
+    });
   }
   private send(p: Peer, msg: unknown) {
     if (p.socket.readyState !== WebSocket.OPEN || p.socket.bufferedAmount >= 65536) return;
@@ -548,6 +652,10 @@ export class Hub {
     }
   }
   private tick() {
+    this.osAudio.tick();
+    const groups = this.osAudio.activeGroups();
+    for (const id of this.osVoiceBindings.keys())
+      if (!groups.has(id)) this.osVoiceBindings.delete(id);
     this.passive.tick();
     this.options.store.expire();
     for (const [id, p] of this.peers) {
@@ -727,8 +835,17 @@ export class Hub {
     return {
       device_id: id,
       connection: d.deviceUrl ? 'passive' : 'active',
-      online: d.deviceUrl ? this.passive.state(id).online : !!p,
-      boot_id: d.deviceUrl ? this.passive.state(id).boot_id : (p?.boot ?? null),
+      online: this.osPeers.has(id)
+        ? this.osPeers.get(id)!.online
+        : d.deviceUrl
+          ? this.passive.state(id).online
+          : !!p,
+      protocol: this.osPeers.has(id) || d.protocol === 'wishos' ? 'wishos-rpc/1' : 'notes-v2',
+      boot_id: this.osPeers.has(id)
+        ? this.osPeers.get(id)!.boot
+        : d.deviceUrl
+          ? this.passive.state(id).boot_id
+          : (p?.boot ?? null),
       capabilities: d.deviceUrl ? this.passive.state(id).capabilities : (p?.capabilities ?? null),
       ...this.options.store.state(id),
       harness: d.adapter.name,
@@ -749,6 +866,8 @@ export class Hub {
   }
   enqueue(id: string, raw: unknown) {
     this.device(id);
+    if (this.osPeers.has(id) || this.device(id).protocol === 'wishos')
+      throw new HttpError(409, 'Use the WishOS resource API for this device');
     const input = CommandRequest.parse(raw);
     if (
       this.options.allowPowerCommands === false &&
@@ -761,7 +880,103 @@ export class Hub {
     this.dispatch(id);
     return c;
   }
+  private async submitOsAudio(
+    id: string,
+    stream: string,
+    wav: Buffer,
+    config: AudioConfig,
+    signal: AbortSignal,
+  ) {
+    const d = this.device(id),
+      key = config.binding_group ?? stream,
+      voiceId =
+        'os:' +
+        createHash('sha256')
+          .update(id + '\0' + stream)
+          .digest('base64url');
+    let lane = this.osVoiceBindings.get(key);
+    if (!lane) {
+      lane = {
+        pending: 0,
+        tail: Promise.resolve(),
+        sessionId: config.resolved_session_id ?? config.session_id ?? null,
+        streams: new Set(),
+        continuing: true,
+      };
+      this.osVoiceBindings.set(key, lane);
+    }
+    const existing = this.voiceReceipt(id, voiceId);
+    if (existing) return existing;
+    if (lane.sessionReady) lane.sessionId = await lane.sessionReady;
+    const recognizer = this.speech.capture(d.adapter, lane.sessionId, signal);
+    if (!recognizer) throw Error('speech_unavailable');
+    const text = await recognizer.transcribe(wav, signal);
+    if (this.stopping) throw Error('hub_stopping');
+    const result = await this.submitVoice(id, voiceId, text, lane);
+    return { ...result, transcript: text };
+  }
+  private voiceReceipt(id: string, stream: string): Record<string, unknown> | undefined {
+    const key = 'voice:' + stream;
+    const steer = this.options.store.db
+      .prepare('SELECT * FROM voice_steers WHERE device_id=? AND request_id=?')
+      .get(id, key) as any;
+    if (steer)
+      return {
+        stage: steer.status === 'accepted' ? 'steered' : 'uncertain',
+        run_id: steer.run_id,
+        session_id: steer.session_id,
+      };
+    const run = this.options.store.db
+      .prepare('SELECT * FROM runs WHERE device_id=? AND request_id=?')
+      .get(id, key) as any;
+    if (run)
+      return {
+        stage: run.status === 'uncertain' ? 'uncertain' : 'submitted',
+        run_id: run.id,
+        session_id: run.resolved_session ?? null,
+      };
+  }
+  private beginOsAudio(id: string, stream: string, raw: AudioConfig) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+      throw new HttpError(400, 'audio_configuration');
+    for (const key of Object.keys(raw))
+      if (
+        !['sample_rate', 'session_id', 'max_gap_ms', 'max_missing_ms', 'max_loss_ratio'].includes(
+          key,
+        )
+      )
+        throw new HttpError(400, 'audio_configuration_field');
+    const d = this.device(id),
+      prior = this.osAudio.binding(id, stream),
+      pending = this.osAudio.pendingGroup(id);
+    const reuse = raw.session_id === undefined && pending?.session_id === undefined;
+    const group =
+      prior?.binding_group ?? (reuse ? pending?.binding_group : undefined) ?? randomUUID();
+    const chosen = Object.hasOwn(raw, 'session_id')
+      ? raw.session_id
+      : ((reuse ? pending?.resolved_session_id : undefined) ??
+        this.options.store.session(id, d.adapter.name) ??
+        d.sessionId);
+    const config = {
+      ...raw,
+      binding_group: group,
+      ...(chosen ? { resolved_session_id: chosen } : {}),
+    };
+    const result = this.osAudio.begin(id, stream, config);
+    if (!this.osVoiceBindings.has(group))
+      this.osVoiceBindings.set(group, {
+        pending: 0,
+        tail: Promise.resolve(),
+        sessionId: chosen ?? null,
+        sessionReady: raw.session_id === undefined ? this.foreground.get(id)?.session : undefined,
+        streams: new Set(),
+        continuing: true,
+      });
+    return { ...result, limits: this.osAudio.limits };
+  }
   private async submitVoice(id: string, stream: string, text: string, lane: VoiceLane) {
+    const prior = this.voiceReceipt(id, stream);
+    if (prior) return prior;
     // Resolve a newly created session once for the whole voice chain. Never rebind
     // a recording to a different default session selected while ASR was running.
     if (lane.sessionReady) lane.sessionId = await lane.sessionReady;
@@ -931,6 +1146,9 @@ export class Hub {
           (!defaultSession && !this.options.store.session(id, d.adapter.name) && !d.sessionId)
         )
           this.options.store.bind(id, d.adapter.name, session);
+        this.options.store.db
+          .prepare('UPDATE runs SET resolved_session=? WHERE id=?')
+          .run(session, run.id);
         resolveSession(session);
         const p = this.peers.get(id);
         if (p)
@@ -1016,6 +1234,24 @@ export class Hub {
       if (u.pathname !== '/api/speech' || !sameOrigin)
         throw new HttpError(403, 'browser origins not enabled');
     }
+    const osMatch = u.pathname.match(/^\/api\/os\/devices\/([a-zA-Z0-9_.:-]+)\/invoke$/);
+    if (osMatch && req.method === 'POST') {
+      const peer = this.osPeers.get(osMatch[1]!);
+      if (!peer) throw new HttpError(503, 'device_disconnected');
+      const request = await body(req);
+      if (
+        typeof request.path !== 'string' ||
+        typeof request.method !== 'string' ||
+        (request.args !== undefined &&
+          (!request.args || typeof request.args !== 'object' || Array.isArray(request.args)))
+      )
+        throw new HttpError(400, 'rpc_request');
+      const result = await peer.rpc(request.path, request.method, {
+        ...(request.args ?? {}),
+        ...(request.expected_boot_id ? { expected_boot_id: request.expected_boot_id } : {}),
+      });
+      return reply(res, 200, { ...result, id: request.id });
+    }
     if (u.pathname === '/api/speech') {
       if (req.method === 'POST') {
         try {
@@ -1048,7 +1284,7 @@ export class Hub {
         })),
       });
     }
-    if (u.pathname === '/mcp') {
+    if (u.pathname === '/mcp' || u.pathname === '/mcp/notes') {
       const address = this.server.address();
       if (!address || typeof address === 'string') throw new HttpError(503, 'Hub not listening');
       const host = address.address.includes(':')
@@ -1060,6 +1296,7 @@ export class Hub {
         req,
         res,
         hubApi(`http://${host}:${address.port}`, this.options.adminToken),
+        u.pathname === '/mcp/notes',
       );
     }
     if (u.pathname === '/api/devices' && req.method === 'GET')
@@ -1068,6 +1305,23 @@ export class Hub {
         200,
         [...this.devices.keys()].map((id) => this.state(id)),
       );
+    const audio = u.pathname.match(
+      /^\/api\/devices\/([a-zA-Z0-9_.:-]+)\/audio\/([a-zA-Z0-9_.:-]+)(?:\/(begin|chunks|finish|retry))?$/,
+    );
+    if (audio) {
+      const id = audio[1]!,
+        stream = audio[2]!,
+        action = audio[3];
+      this.device(id);
+      if (req.method === 'GET' && !action) return reply(res, 200, this.osAudio.status(id, stream));
+      if (req.method !== 'POST') throw new HttpError(405, 'POST required');
+      const data = await body(req);
+      if (action === 'begin') return reply(res, 200, this.beginOsAudio(id, stream, data));
+      if (action === 'chunks') return reply(res, 200, this.osAudio.append(id, stream, data.chunks));
+      if (action === 'retry') return reply(res, 202, this.osAudio.retry(id, stream));
+      if (action === 'finish') return reply(res, 202, this.osAudio.finish(id, stream, data));
+      throw new HttpError(404, 'audio_operation');
+    }
     let m = u.pathname.match(
       /^\/api\/devices\/([a-zA-Z0-9_.:-]+)\/(state|commands|messages|interrupt|usage|tools)$/,
     );
@@ -1165,6 +1419,13 @@ export class Hub {
     this.stopping = true;
     this.speechAbort.abort();
     clearInterval(this.timer);
+    for (const peer of this.osPeers.values()) {
+      peer.abort.abort();
+      peer.bridge.close();
+      clearInterval(peer.timer);
+      peer.socket?.close();
+    }
+    this.osPeers.clear();
     await this.mcp.close();
     await this.passive.close();
     for (const [id] of this.peers) this.options.store.disconnected(id);
@@ -1173,6 +1434,7 @@ export class Hub {
     await Promise.all(
       [...new Set([...this.devices.values()].map((d) => d.adapter))].map((a) => a.close()),
     );
+    await this.osAudio.close();
     while (this.tasks.size) await Promise.allSettled([...this.tasks]);
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
     await new Promise<void>((resolve) => this.ws.close(() => resolve()));

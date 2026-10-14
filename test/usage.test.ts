@@ -57,7 +57,7 @@ test('native Codex usage works through Notes HTTP MCP while unsupported adapters
   try {
     const address = (await hub.listen(0, '127.0.0.1')) as any;
     await client.connect(
-      new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`)),
+      new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp/notes`)),
     );
     const tools = await client.listTools();
     assert.ok(tools.tools.some((t) => t.name === 'get_harness_usage'));

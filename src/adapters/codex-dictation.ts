@@ -86,6 +86,7 @@ export function dictationSegments(pcm: Buffer): Buffer[] {
   return segments;
 }
 export class CodexDictation implements NativeSpeech {
+  readonly inputSampleRate = 16000;
   readonly available = true;
   constructor(
     private auth: () => Promise<AccountSpeechAuth>,

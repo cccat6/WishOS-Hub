@@ -15,7 +15,7 @@ test('HTTP MCP: discovery, tools, resource, offline queue, idempotency and isola
     allowPowerCommands: false,
   });
   const address = (await hub.listen(0, '127.0.0.1')) as any;
-  const url = `http://127.0.0.1:${address.port}/mcp`;
+  const url = `http://127.0.0.1:${address.port}/mcp/notes`;
   const clients = [
     new Client({ name: 'one', version: '1' }),
     new Client({ name: 'two', version: '1' }),
@@ -76,7 +76,7 @@ test('HTTP MCP uses optional Hub token, rejects wrong token and unsupported brow
     devices: [{ id: 'board', token: 'device-fixture', adapter: new MockAdapter() }],
   });
   const address = (await hub.listen(0, '127.0.0.1')) as any,
-    url = `http://127.0.0.1:${address.port}/mcp`;
+    url = `http://127.0.0.1:${address.port}/mcp/notes`;
   const client = new Client({ name: 'token-client', version: '1' });
   try {
     assert.equal((await fetch(url, { method: 'POST', body: '{}' })).status, 401);

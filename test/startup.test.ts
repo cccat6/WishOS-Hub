@@ -31,7 +31,14 @@ test('documented Hub entrypoint and standalone simulator run end to end', async 
         port,
         host: '127.0.0.1',
         database: join(dir, 'db.sqlite'),
-        devices: [{ id: 'sim-1', tokenEnv: 'NOTES_DEVICE_TOKEN', harness: { kind: 'mock' } }],
+        devices: [
+          {
+            id: 'sim-1',
+            protocol: 'notes',
+            tokenEnv: 'NOTES_DEVICE_TOKEN',
+            harness: { kind: 'mock' },
+          },
+        ],
       }),
     );
     const cwd = fileURLToPath(new URL('..', import.meta.url));

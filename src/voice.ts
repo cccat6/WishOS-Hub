@@ -6,6 +6,7 @@ export const MAX_RECORDING_SECONDS = 300;
 export const MAX_RECORDING_BYTES = 16000 * 2 * MAX_RECORDING_SECONDS;
 export const AUDIO_UPLOAD_TIMEOUT_MS = MAX_RECORDING_SECONDS * 1000 + 35000;
 export interface NativeSpeech {
+  readonly inputSampleRate?: number;
   readonly available: boolean;
   readonly reason?: string;
   transcribe(

@@ -153,7 +153,7 @@ test('speech settings HTTP persists blanks, refreshes device voice availability 
         capabilities: { display: true, audio: true, sleep: false, max_scene_bytes: 8192 },
       }),
     );
-    await new Promise((r) => setTimeout(r, 30));
+    for (let i = 0; i < 100 && !messages.length; i++) await new Promise((r) => setTimeout(r, 10));
     assert.equal(messages[0].voice_available, false);
     const url = base + '/api/speech';
     const config = {
@@ -169,7 +169,8 @@ test('speech settings HTTP persists blanks, refreshes device voice availability 
       });
     assert.equal((await save(config, 'http://unrelated.example')).status, 403);
     assert.equal((await save(config)).status, 200);
-    await new Promise((r) => setTimeout(r, 30));
+    for (let i = 0; i < 100 && messages.at(-1)?.voice_available !== true; i++)
+      await new Promise((r) => setTimeout(r, 10));
     assert.equal(messages.at(-1).voice_available, true);
     config.thirdParty.token = '';
     const response = await save(config);

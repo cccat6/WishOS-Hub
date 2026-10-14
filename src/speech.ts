@@ -1,3 +1,4 @@
+import { speechWavRate } from './voice-resample.js';
 import { z } from 'zod';
 import { HttpAsr, type Asr, type NativeSpeech } from './voice.js';
 import type { Store } from './store.js';
@@ -119,7 +120,10 @@ export class SpeechSettings {
     return {
       transcribe: async (wav) => {
         try {
-          return await native.transcribe(wav, { sessionId, signal });
+          const input = native.inputSampleRate
+            ? await speechWavRate(wav, native.inputSampleRate, signal)
+            : wav;
+          return await native.transcribe(input, { sessionId, signal });
         } catch (error) {
           if (error instanceof SpeechUnavailable && config.fallbackToThirdParty && third)
             return third.transcribe(wav, signal);

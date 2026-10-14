@@ -32,6 +32,8 @@ export class Store {
     const runColumns = this.db.prepare('PRAGMA table_info(runs)').all() as { name: string }[];
     if (!runColumns.some((column) => column.name === 'session_request'))
       this.db.exec("ALTER TABLE runs ADD COLUMN session_request TEXT NOT NULL DEFAULT 'default'");
+    if (!runColumns.some((column) => column.name === 'resolved_session'))
+      this.db.exec('ALTER TABLE runs ADD COLUMN resolved_session TEXT');
     // A crash is not permission to replay a possibly side-effecting operation.
     this.db.exec(
       "UPDATE voice_steers SET status='uncertain' WHERE status='sending'; UPDATE commands SET status='uncertain', detail='hub restarted during execution' WHERE status IN ('sent','accepted','running'); UPDATE runs SET status='uncertain', result='Hub restarted; inspect harness session before retrying' WHERE status='running';",

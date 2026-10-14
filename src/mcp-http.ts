@@ -1,17 +1,18 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createNotesMcp, type HubApi } from './mcp-tools.js';
+import { createWishosMcp } from './wishos-mcp.js';
 import { HttpError } from './protocol.js';
 export class NotesMcpHttp {
   private active = new Set<ReturnType<typeof createNotesMcp>>();
-  async handle(req: IncomingMessage, res: ServerResponse, api: HubApi) {
+  async handle(req: IncomingMessage, res: ServerResponse, api: HubApi, legacy = false) {
     if (req.method !== 'POST') {
       res.writeHead(405, { Allow: 'POST' });
       res.end();
       return;
     }
     if (this.active.size >= 16) throw new HttpError(429, 'MCP request capacity reached');
-    const server = createNotesMcp(api);
+    const server = legacy ? createNotesMcp(api) : createWishosMcp(api);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,

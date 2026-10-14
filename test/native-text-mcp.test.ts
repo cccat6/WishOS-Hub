@@ -29,6 +29,7 @@ test('MCP native text submits only a raster and returns queue state with renderi
     command: process.execPath,
     args: [fileURLToPath(new URL('../dist/mcp.js', import.meta.url))],
     env: {
+      NOTES_PROTOCOL: 'notes',
       PATH: process.env.PATH ?? '',
       NOTES_ADMIN_TOKEN: 'test-only',
       NOTES_HUB_URL: `http://127.0.0.1:${address.port}`,
