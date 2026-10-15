@@ -208,7 +208,7 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
   job(
     'preflight_bundle',
     'preflight',
-    'Compile/check the complete immutable staged file set before any device write. An optional boot-scoped target adds actual capability and declared budget checks. Does not execute Lua or prove arbitrary program semantics.',
+    'Compile/check the complete immutable staged file set before any device write. An optional boot-scoped target adds capability and declared-limit checks. This is static validation, not a heap reservation, runtime memory guarantee or activation. Lua is not executed.',
     { ...target, files: z.array(packageFile).min(1) },
   );
   job(
@@ -220,7 +220,7 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
   job(
     'deploy_package',
     'package_deploy',
-    'Preflight the complete package, deliver it, await native validation and install with a matching ticket/catalog revision. Activation is optional and has separate completion. Poll read_resource_job and retain receipts before retrying uncertain effects.',
+    'Preflight the complete package, deliver it, await native validation and install with a matching ticket/catalog revision. Activation is optional and has separate completion. Installation can remain committed when activation fails; read install/activation receipts. Poll read_resource_job and reconcile uncertain effects before retrying.',
     {
       device_id: z.string(),
       expected_boot_id: z.string(),
@@ -234,7 +234,7 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
   job(
     'update_package',
     'package_update',
-    'Replace whole files/delete files in a new immutable revision of an installed package. Reads unchanged control sources for complete preflight; unchanged binary assets stay on device and require native local-copy digest verification. Never edit lines or silently merge a changed catalog base. User data stays outside application revisions.',
+    'Replace whole files/delete files in a new immutable revision of an installed package. Reads unchanged control sources for complete preflight; unchanged binary assets stay on device and require native local-copy digest verification. Never edit lines or silently merge a changed catalog base. User data stays outside application revisions. Validation does not reserve runtime memory; installation and optional activation have separate receipts.',
     {
       device_id: z.string(),
       expected_boot_id: z.string(),

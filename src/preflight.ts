@@ -492,10 +492,14 @@ async function checkResolved(
     warnings,
     limits: {
       runtime_source_bytes: runtimeLimit ?? null,
+      ...(runtime.budgets ? { runtime_budgets: runtime.budgets } : {}),
+      ...(typeof runtime.memory_budget_semantics === 'string'
+        ? { runtime_memory_budget_semantics: runtime.memory_budget_semantics }
+        : {}),
       package: apps.package_validation ?? null,
       ui_document_bytes: uiCaps.max_document_bytes ?? null,
     },
     scope:
-      'Declared control files, recognized runtime/UI formats and Lua are checked; ordinary data assets use streamed integrity checks. Content/declared references and advertised requirements only; not arbitrary program semantics, execution peak memory or future native admission',
+      'Declared control files, recognized runtime/UI formats and Lua are checked; ordinary data assets use streamed integrity checks. Content/declared references and advertised requirements only; not arbitrary program semantics, execution peak memory, a heap reservation or successful future native activation',
   };
 }

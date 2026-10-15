@@ -696,3 +696,82 @@ test('an installed revision survives activation refusal with receipts, while old
     await f.close();
   }
 });
+
+test('static declared memory compliance is independent of free heap and reports native budget semantics', async () => {
+  const f = await fixture(),
+    d = device();
+  try {
+    const p = await packageFiles(f.source, 'return {}', { memory_bytes: 120000 });
+    const rpc: DeviceRpc = async (path, method, args) => {
+      const reply = await d.rpc(path, method, args);
+      if (path === '/sys/capabilities' && args.path === '/sys/runtime')
+        reply.result.memory_budget_semantics = 'elastic_limit_with_checked_actual_growth';
+      if (path === '/sys/runtime') reply.result.free_heap_bytes = 1024;
+      return reply;
+    };
+    const report = await preflightBundle(f.source, p.files, {
+      compiler: nodeLuaCompiler,
+      rpc,
+      expectedBoot: 'boot',
+      signal: signal(),
+    });
+    assert(report.ok);
+    assert.equal(
+      report.limits.runtime_memory_budget_semantics,
+      'elastic_limit_with_checked_actual_growth',
+    );
+    assert.equal((report.limits.runtime_budgets as any).memory_bytes.maximum, 240000);
+    assert.match(report.scope, /not.*heap reservation/);
+    assert(!d.calls.some((c) => ['load', 'install', 'request'].includes(c.method)));
+  } finally {
+    await f.close();
+  }
+});
+test('a persisted failed activation job retains successful installation and never replays on recovery', async () => {
+  const { PackageDevice } = await import('./fixtures/package-device.js'),
+    { deployPackage } = await import('../src/packages.js'),
+    { ResourceJobs } = await import('../src/resource-jobs.js'),
+    { HostJobStore } = await import('../src/connect/job-store.js');
+  const f = await fixture(),
+    db = new DatabaseSync(':memory:'),
+    jobs = new ResourceJobs(new HostJobStore(db)),
+    d = new PackageDevice();
+  let recovered: InstanceType<typeof ResourceJobs> | undefined;
+  try {
+    d.activationCompletionError = 'script_load_failed';
+    const p = await packageFiles(f.source);
+    jobs.submit('activation-job', 'same-content', 'package_deploy', (s) =>
+      deployPackage(f.source, p.files, d.rpc, d.boot, {
+        compiler: nodeLuaCompiler,
+        signal: s,
+        activate: true,
+      }),
+    );
+    await jobs.wait('activation-job');
+    const failed = jobs.read('activation-job');
+    assert.equal(failed.state, 'failed');
+    assert.equal(failed.error, 'application_activation_failed');
+    assert.equal((failed.receipts!.install as any).revision, 1);
+    assert.equal((failed.receipts!.activation as any).data.error, 'script_load_failed');
+    assert.equal(d.revision, 1);
+    assert.equal(d.active, 'original');
+    assert.equal(d.ticket, undefined);
+    let replayed = 0;
+    recovered = new ResourceJobs(new HostJobStore(db));
+    const prior = recovered.submit('activation-job', 'same-content', 'package_deploy', async () => {
+      replayed++;
+      return {};
+    });
+    assert.equal(prior.state, 'failed');
+    assert.equal(replayed, 0);
+    assert.equal(
+      d.calls.filter((c) => c.path === '/sys/operations' && c.method === 'request').length,
+      1,
+    );
+  } finally {
+    await jobs.close();
+    await recovered?.close();
+    db.close();
+    await f.close();
+  }
+});

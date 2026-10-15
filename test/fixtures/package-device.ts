@@ -17,6 +17,8 @@ export class PackageDevice {
   released = 0;
   failValidation = false;
   failActivation = false;
+  activationCompletionError?: string;
+  pendingApplication?: string;
   installed?: { manifest: string; package: string; inventory_sha256: string; application: any };
   ticket?: {
     manifest: string;
@@ -305,11 +307,15 @@ export class PackageDevice {
     if (path === '/sys/operations') {
       if (method === 'request') {
         if (this.failActivation) throw Error('injected_activation_rejection');
-        this.active = a.args.id;
+        this.pendingApplication = a.args.id;
         return { completion_id: 100 };
       }
-      if (method === 'read')
+      if (method === 'read') {
+        if (this.activationCompletionError)
+          return { ready: true, event: 'failed', data: { error: this.activationCompletionError } };
+        this.active = this.pendingApplication ?? this.active;
         return { ready: true, event: 'launched', data: { application_id: this.active } };
+      }
       if (method === 'release') return { released: true };
     }
     throw Error('fixture_resource:' + path + ':' + method);

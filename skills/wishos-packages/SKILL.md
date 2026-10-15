@@ -19,7 +19,11 @@ and the program entry remain code; an asset label cannot bypass Lua validation.
 Keep books and recording histories outside application revision directories. Check the entire resulting revision: header, inventory,
 content hashes, manifests, references, actual Lua syntax using the selected native parser profile, selected capabilities
 and known budgets. Follow structured error diagnostics to fix the whole offending
-file. Validation does not prove arbitrary application semantics or future heap.
+file. Validation does not prove arbitrary application semantics, reserve runtime heap
+or guarantee activation. A declared memory budget is the target's configured limit,
+with its advertised accounting semantics, rather than a claim that so much free
+heap exists or must be reserved before starting. Actual native allocation and
+activation remain authoritative.
 
 A file-level update identifies its installed base/catalog revision and carries
 whole replacement files plus explicit deletions. Reconstruct and validate the
@@ -49,3 +53,9 @@ Typed deployment releases only its own committed transfer receipt after native
 validation admission acquires the package lease. Generic resource delivery keeps
 that receipt for explicit consumer adoption; a managed OS result adopts it itself.
 Do not add or reorder managed actions to compensate for transport bookkeeping.
+
+When activate is false, successful deployment means installed, not running.
+When requested activation fails, a failed job may still contain a successful
+install receipt with the new revision/paths and a failed activation receipt.
+Keep those outcomes distinct, preserve the old foreground if the native service
+does so, and never invent an automatic rollback or repeat on_start.
