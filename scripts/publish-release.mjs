@@ -63,6 +63,24 @@ async function tagCommit(repo, tag) {
   if (object.type !== 'commit') throw Error('Release tag must resolve to a commit');
   return object.sha;
 }
+export function selectReleaseId(ids) {
+  if (ids.length !== 1 || !Number.isSafeInteger(ids[0]))
+    throw Error('Release tag must identify exactly one release, including drafts');
+  return ids[0];
+}
+function findRelease(repo, tag) {
+  // GET /releases/tags excludes drafts. Resolve the release once, then keep its
+  // immutable numeric identity across visibility changes.
+  const rows = gh(
+    'api',
+    `repos/${repo}/releases?per_page=100`,
+    '--paginate',
+    '--jq',
+    `.[]|select(.tag_name==${JSON.stringify(tag)})|.id`,
+  );
+  const ids = rows ? rows.split('\n').map(Number) : [];
+  return api(repo, `releases/${selectReleaseId(ids)}`);
+}
 async function prepare() {
   const repo = process.env.GITHUB_REPOSITORY,
     tag = process.env.RELEASE_TAG,
@@ -77,7 +95,7 @@ async function prepare() {
     run = api(repo, `actions/runs/${runId}`);
   const listing = api(repo, `actions/runs/${runId}/artifacts?per_page=100`);
   const artifacts = validateSource(run, listing.artifacts, commit);
-  const release = api(repo, `releases/tags/${encodeURIComponent(tag)}`);
+  const release = findRelease(repo, tag);
   if (!release.prerelease) throw Error('This publisher only manages preview releases');
   const raw = api(repo, `contents/package.json?ref=${commit}`);
   const version = JSON.parse(Buffer.from(raw.content, 'base64').toString()).version;
@@ -85,6 +103,7 @@ async function prepare() {
     throw Error('Release version differs from the selected source package');
   const plan = {
     format: 'wishos-publication/1',
+    release_id: release.id,
     repository: repo,
     tag,
     version,
@@ -141,7 +160,7 @@ async function publish(directory) {
   const archives = files.filter((f) => !f.name.endsWith('.sha256'));
   for (const archive of archives)
     verifyArchiveManifest(await readFile(join(root, `${archive.name}.sha256`), 'utf8'), archive);
-  const release = api(plan.repository, `releases/tags/${encodeURIComponent(plan.tag)}`);
+  const release = api(plan.repository, `releases/${plan.release_id}`);
   if (!release.prerelease) throw Error('Refusing to replace a non-preview release');
   // Existing populated releases require an explicit owner-requested replacement.
   if (
@@ -166,7 +185,14 @@ async function publish(directory) {
     files.push({ name, ...(await fileDigest(join(root, name))) });
   // Hide the preview while GitHub's per-asset API is being updated. Failure leaves
   // a draft; only a fully checked generation is made visible again.
-  gh('release', 'edit', plan.tag, '--repo', plan.repository, '--draft');
+  gh(
+    'api',
+    '--method',
+    'PATCH',
+    `repos/${plan.repository}/releases/${plan.release_id}`,
+    '-F',
+    'draft=true',
+  );
   gh(
     'release',
     'upload',
@@ -176,9 +202,18 @@ async function publish(directory) {
     '--clobber',
     ...files.map((f) => join(root, f.name)),
   );
-  verifyRemoteAssets(api(plan.repository, `releases/tags/${encodeURIComponent(plan.tag)}`), files);
-  gh('release', 'edit', plan.tag, '--repo', plan.repository, '--draft=false', '--prerelease');
-  const final = api(plan.repository, `releases/tags/${encodeURIComponent(plan.tag)}`);
+  verifyRemoteAssets(api(plan.repository, `releases/${plan.release_id}`), files);
+  gh(
+    'api',
+    '--method',
+    'PATCH',
+    `repos/${plan.repository}/releases/${plan.release_id}`,
+    '-F',
+    'draft=false',
+    '-F',
+    'prerelease=true',
+  );
+  const final = api(plan.repository, `releases/${plan.release_id}`);
   verifyRemoteAssets(final, files);
   if (final.draft) throw Error('Release did not leave draft state');
   console.log(

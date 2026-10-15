@@ -6,6 +6,7 @@ import {
   verifyArchiveManifest,
   verifyRemoteAssets,
   sha256,
+  selectReleaseId,
 } from '../scripts/publish-release.mjs';
 const commit = 'a'.repeat(40);
 function source() {
@@ -78,4 +79,10 @@ test('a stale per-file manifest or aggregate generation cannot be accepted by ch
       verifyRemoteAssets({ assets: remote.assets.filter((a) => a.name !== 'SHA256SUMS') }, files),
     /Uploaded release asset differs/,
   );
+});
+
+test('draft and published release lookup retains one immutable release identity', () => {
+  assert.equal(selectReleaseId([414006214]), 414006214);
+  assert.throws(() => selectReleaseId([]), /exactly one release/);
+  assert.throws(() => selectReleaseId([414006214, 414006215]), /exactly one release/);
 });
