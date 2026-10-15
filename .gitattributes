@@ -1,0 +1,5 @@
+# Identical source and generated guidance on Windows, macOS and Linux.
+* text=auto eol=lf
+# Pinned upstream snapshots and compiler bytes are verified without conversion.
+vendor/os-reference/** -text
+*.wasm binary
