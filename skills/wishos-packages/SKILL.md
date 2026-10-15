@@ -24,7 +24,10 @@ UI 预检按所选 renderer 的词汇和限制；on_start 可注册字体，结�
 先读 `/sys/apps describe.install_providers` 确认应用安装卷，再读 `/sys/transfers` 有序目标、
 `/fs mounts` 和配额。用户应用/替代 Launcher 优先按设备包的 SD 策略放置；只有设备明确
 允许且配置了内部 Flash 目标和配额才能回退，不按 MCU 型号或容量猜测。
-初始 Launcher 与用户应用同层，按系统声明的可写位置和 revision 更新；不假定 /system 可写。普通数据下载仍按下载策略。
+初始 Launcher 与用户应用同层，也是可管理文件系统中的目录包；更新仍使用新 revision、
+租约和索引切换。设备包的初始引用不等于开放该卷的用户安装权限。C6 的用户安装许可
+仍可只包含 SD，即使初始 Launcher 在内部 Flash。具体位置从 factory_launcher 和卷元数据读取。
+`/system` 系统元数据、标准 helper 和恢复资源不属于可写应用目录。普通数据下载仍按下载策略。
 
 传完后提交原生 validate，等待成功票据，再以匹配的 validation_id、manifest/package
 和 expected_revision 安装。持有验证租约直到 catalog 提交；成功安装消费票据，失败释放。

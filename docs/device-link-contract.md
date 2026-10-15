@@ -65,6 +65,15 @@ mounting or writing storage. Explicit delivery may prepare storage, then recheck
 the actual target before beginning package transfer. Native validation/install
 remains authoritative. This restriction does not apply to ordinary data delivery.
 No MCU family or Flash-size heuristic is used. Initial and user launchers have
-normal application lifecycles. The terminal owner is finalizing writable internal
-filesystem provisioning and recovery references; Hub does not presume `/system`
-is writable or define a privileged launcher layer.
+normal application lifecycles. The current terminal design provisions ordinary
+Launcher/page files into LittleFS at `/storage/flash/factory` using the factory
+`runtime.littlefs.bin` image. This is the device package's initial reference, not a
+grant to install user applications on Flash. C6 may still advertise only `user`
+(SD) in install_providers; another package can explicitly permit Flash.
+
+`/system` remains read-only for system metadata, standard Lua helpers and the
+ordinary recovery application. Helpers retain `/system/lib/input.lua` and
+`/system/lib/ai.lua` runtime URIs; their source is now `firmware/WishOS/lib/` in
+the OS repository. Hub guidance ships references, not another copy of the runtime
+libraries. The new native source pin and joint acceptance are pending the terminal
+owner's final commit; published old-release evidence remains unchanged.
