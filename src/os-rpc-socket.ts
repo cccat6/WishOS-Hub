@@ -111,15 +111,20 @@ export class OsRpcSocket extends EventEmitter {
     this.inFlight = id;
     call.sent = true;
     const data = call.data;
-    for (let at = 0; at < data.length; at += FRAME - HEADER) {
-      const n = Math.min(FRAME - HEADER, data.length - at),
-        frame = Buffer.alloc(HEADER + n);
-      frame.write('WOS1');
-      frame.writeUInt32LE(id, 4);
-      frame.writeUInt16LE(at, 8);
-      frame.writeUInt16LE(data.length, 10);
-      data.copy(frame, HEADER, at, at + n);
-      this.socket.send(frame, { binary: true });
+    try {
+      for (let at = 0; at < data.length; at += FRAME - HEADER) {
+        const n = Math.min(FRAME - HEADER, data.length - at),
+          frame = Buffer.alloc(HEADER + n);
+        frame.write('WOS1');
+        frame.writeUInt32LE(id, 4);
+        frame.writeUInt16LE(at, 8);
+        frame.writeUInt16LE(data.length, 10);
+        data.copy(frame, HEADER, at, at + n);
+        this.socket.send(frame, { binary: true });
+      }
+    } catch {
+      this.socket.terminate();
+      this.close();
     }
   }
   close() {

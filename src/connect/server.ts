@@ -403,6 +403,7 @@ export class ConnectorServer {
               ...input.args,
               ...guard,
             }),
+          this.hub!.deviceRecovery(invoke[1]!, input.expected_boot_id),
         );
       }
       const result = await hubApi(

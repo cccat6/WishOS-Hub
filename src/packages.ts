@@ -1,3 +1,5 @@
+import { ResourceReplyError } from './resource-reply-error.js';
+import { TransportFailure } from './transport-failure.js';
 import { Buffer } from 'node:buffer';
 import { posix } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -86,7 +88,7 @@ async function checked(
   args: Record<string, unknown> = {},
 ) {
   const r = await rpc(path, method, args);
-  if (!r.ok) throw Error(r.error ?? 'device_operation_failed');
+  if (!r.ok) throw new ResourceReplyError(r);
   return r.result;
 }
 function methods(metadata: any) {
@@ -185,11 +187,23 @@ async function deployPinned(
   ) => {
     signal.throwIfAborted();
     receipts[key] = { path, method, args, state: 'requesting' };
-    const reply = await rpc(path, method, args);
+    let reply;
+    try {
+      reply = await rpc(path, method, args);
+    } catch (error) {
+      if (error instanceof TransportFailure && !error.dispatched)
+        receipts[key] = {
+          ok: false,
+          error: error.message,
+          result: { not_dispatched: true },
+          boot_id: boot,
+        };
+      throw error;
+    }
     receipts[key] = reply.ok
       ? reply.result
       : { ok: false, error: reply.error, result: reply.result, boot_id: reply.boot_id };
-    if (!reply.ok) throw Error(reply.error ?? 'device_operation_failed');
+    if (!reply.ok) throw new ResourceReplyError(reply);
     return reply.result;
   };
   try {
@@ -276,6 +290,11 @@ async function deployPinned(
     if (error && typeof error === 'object' && 'transfer_receipt' in error)
       receipts.transfer = error.transfer_receipt;
     if (error instanceof PackageOutcomeUnknown) throw error;
+    if (
+      error instanceof ResourceReplyError ||
+      (error instanceof TransportFailure && !error.dispatched)
+    )
+      throw Object.assign(error, { receipts });
     if (
       error instanceof Error &&
       /disconnected|transport|outcome_unknown|timeout/.test(error.message)

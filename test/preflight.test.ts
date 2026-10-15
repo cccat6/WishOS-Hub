@@ -1009,3 +1009,43 @@ test('a catalog change during method discovery prevents the explicitly requested
     await f.close();
   }
 });
+
+test('an explicit not-dispatched reply is a known failed install even if its cause is a lost preflight read', async () => {
+  const f = await fixture();
+  const { PackageDevice } = await import('./fixtures/package-device.js'),
+    { deployPackage } = await import('../src/packages.js'),
+    { ResourceJobs } = await import('../src/resource-jobs.js'),
+    { HostJobStore } = await import('../src/connect/job-store.js');
+  const db = new DatabaseSync(':memory:'),
+    jobs = new ResourceJobs(new HostJobStore(db)),
+    d = new PackageDevice();
+  try {
+    const p = await packageFiles(f.source),
+      rpc: DeviceRpc = async (path, method, args) =>
+        path === '/sys/apps' && method === 'install'
+          ? {
+              ok: false,
+              boot_id: d.boot,
+              error: 'rpc_outcome_unknown',
+              result: { not_dispatched: true },
+            }
+          : d.rpc(path, method, args);
+    jobs.submit('not-sent', 'source', 'package_deploy', (s) =>
+      deployPackage(f.source, p.files, rpc, d.boot, {
+        compiler: nodeLuaCompiler,
+        signal: s,
+        activate: true,
+      }),
+    );
+    await jobs.wait('not-sent');
+    const job = jobs.read('not-sent');
+    assert.equal(job.state, 'failed');
+    assert.equal((job.receipts!.install as any).result.not_dispatched, true);
+    assert.equal(d.revision, 0);
+    assert(!d.calls.some((c) => c.path === '/sys/operations' && c.method === 'request'));
+  } finally {
+    await jobs.close();
+    db.close();
+    await f.close();
+  }
+});

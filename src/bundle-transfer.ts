@@ -1,3 +1,5 @@
+import { ResourceReplyError } from './resource-reply-error.js';
+import { TransportFailure } from './transport-failure.js';
 import { Buffer } from 'node:buffer';
 import { posix } from 'node:path';
 import type { DeviceRpc } from './os-remote.js';
@@ -47,7 +49,7 @@ export async function deliverBundle(
           await new Promise((r) => setTimeout(r, 25));
           continue;
         }
-        throw Error(r.error ?? 'transfer_failed');
+        throw new ResourceReplyError(r);
       }
     };
     const total = resolved.reduce((n, f) => n + f.size, 0),
@@ -100,9 +102,11 @@ export async function deliverBundle(
           if (!result.ok) {
             const error =
               result.error ?? result.result?.data?.error ?? 'storage_preparation_failed';
-            if (/memory|budget|busy|active|timeout|cancel/.test(error)) throw Error(error);
+            if (/memory|budget|busy|active|timeout|cancel/.test(error))
+              throw new ResourceReplyError({ ...result, error });
             const state = await rpc(volume.prepare.path, 'read', {});
-            if (state.ok && state.result.link_ready) throw Error('storage_volume_unavailable');
+            if (state.ok && state.result.link_ready)
+              throw new ResourceReplyError({ ...result, error: 'storage_volume_unavailable' });
             continue;
           }
           volumes = await rpc('/fs', 'mounts', {});
@@ -110,7 +114,11 @@ export async function deliverBundle(
         }
         if (volume.capacity_refresh && (volume.free_needs_refresh || volume.free_bytes == null)) {
           const r = await prepare(volume.capacity_refresh);
-          if (!r.ok) throw Error('storage_capacity_unavailable');
+          if (!r.ok)
+            throw new ResourceReplyError({
+              ...r,
+              error: r.error ?? 'storage_capacity_unavailable',
+            });
         }
         break;
       }
@@ -123,7 +131,12 @@ export async function deliverBundle(
       throw Object.assign(error instanceof Error ? error : Error(String(error)), {
         transfer_receipt: {
           request_id: key,
-          state: 'begin_outcome_unknown',
+          state:
+            error instanceof ResourceReplyError
+              ? 'rejected'
+              : error instanceof TransportFailure && !error.dispatched
+                ? 'not_dispatched'
+                : 'begin_outcome_unknown',
           expected_boot_id: boot,
         },
       });

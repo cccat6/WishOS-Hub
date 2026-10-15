@@ -1,3 +1,4 @@
+import { recoverDispatch, type DispatchRecovery } from './dispatch-recovery.js';
 import { TransportFailure } from './transport-failure.js';
 export type ControlReply = {
   ok: boolean;
@@ -74,6 +75,7 @@ export function controlReceipt(reply: ControlReply) {
       'state',
       'accepted',
       'queued',
+      'not_dispatched',
     ]) {
       const value = result[key];
       if (
@@ -101,12 +103,13 @@ export class ControlGuard {
     input: ControlInput,
     describe: () => Promise<ControlReply>,
     execute: () => Promise<ControlReply>,
+    recovery?: DispatchRecovery,
   ) {
-    const schema = await describe();
+    const schema = await recoverDispatch(describe, recovery, true);
     if (!schema.ok) return schema;
     const readMethods =
       (schema.result as { read_methods?: string })?.read_methods?.split(',') ?? [];
-    if (readMethods.includes(input.method)) return execute();
+    if (readMethods.includes(input.method)) return recoverDispatch(execute, recovery, true);
     if (!input.request_id || !input.request_id.match(/^[A-Za-z0-9_.:-]{1,128}$/))
       throw Error('request_id_required_for_mutation');
     if (!input.expected_boot_id) throw Error('expected_boot_id_required_for_mutation');
@@ -135,6 +138,18 @@ export class ControlGuard {
       if (prior.fingerprint !== record.fingerprint) throw Error('request_id_conflict');
       if (prior.state === 'returned' || prior.state === 'reconciled') {
         if (prior.response) return prior.response;
+        if (prior.receipt?.not_dispatched === true)
+          return {
+            ok: false,
+            boot_id: prior.boot,
+            error: String(prior.receipt.error ?? 'operation_not_dispatched'),
+            result: {
+              not_dispatched: true,
+              request_id: prior.request,
+              executed_again: false,
+              receipt: prior.receipt,
+            },
+          };
         return {
           ok: false,
           boot_id: prior.boot,
@@ -148,7 +163,7 @@ export class ControlGuard {
       if (prior.state === 'unknown' || prior.attempt !== record.attempt)
         throw Error('mutation_outcome_unknown_reconcile_first');
       try {
-        const response = await execute();
+        const response = await recoverDispatch(execute, recovery, false);
         if (response.boot_id !== record.boot) throw Error('device_boot_changed');
         await this.store.finish(key, 'returned', response);
         return response;

@@ -71,3 +71,12 @@ read all receipts. Hub never silently enables this option, retries with it, roll
 back the catalog, or restarts old/new on_start. Without it the old VM is retained
 through normal native admission. The option does not rewrite returned managed
 application/system action sequences or their $previous references.
+
+Transport loss during a declared read-only precheck may be reread within a bounded
+same-boot recovery window. A mutation is only eligible to wait/retry while the
+transport proves it was not dispatched. A sent mutation with a missing reply
+stays uncertain and is not replayed. A response with result.not_dispatched:true
+is a known failure of that requested call, even if an earlier precheck read lost
+its reply; it does not undo earlier stop/transfer/validation steps. Inspect saved
+receipts and current boot/catalog before a new explicit request. Failed package
+staging is retained for explicit cleanup; never delete an old running revision.

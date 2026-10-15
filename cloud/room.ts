@@ -1,3 +1,5 @@
+import { dispatchPause, type DispatchRecovery } from '../src/dispatch-recovery';
+import { TransportFailure } from '../src/transport-failure';
 import { packageJobKinds, runPackageJob } from '../src/package-jobs';
 import { guardedInvocation } from '../src/preflight-call';
 import type { DeviceRpc } from '../src/os-remote';
@@ -54,7 +56,7 @@ export class WishosRoom extends DurableObject<WishosCloudEnv> {
     });
     for (const socket of this.ctx.getWebSockets()) {
       const tag = socket.deserializeAttachment() as Tag;
-      if (tag.role === 'device' && tag.device)
+      if (socket.readyState === WebSocket.OPEN && tag.role === 'device' && tag.device)
         this.makeWire(tag.device, socket).boot = tag.boot ?? '';
     }
   }
@@ -208,6 +210,7 @@ export class WishosRoom extends DurableObject<WishosCloudEnv> {
     });
   }
   private makeWire(id: string, socket: WebSocket) {
+    this.wires.get(id)?.close();
     const wire = new CloudWire(
       (bytes) => socket.send(bytes),
       () => {
@@ -334,7 +337,9 @@ export class WishosRoom extends DurableObject<WishosCloudEnv> {
         if (!p) return;
         clearTimeout(p.timer);
         this.pending.delete(m.id);
-        m.error ? p.reject(Error('connector_request_failed')) : p.resolve(m.result);
+        m.error
+          ? p.reject(new TransportFailure('connector_outcome_unknown', true))
+          : p.resolve(m.result);
         return;
       }
       if (typeof message === 'string' || message.byteLength > 1024) throw Error('device_frame');
@@ -378,7 +383,7 @@ export class WishosRoom extends DurableObject<WishosCloudEnv> {
       if (this.sockets('connector').some((s) => s !== socket)) return;
       for (const p of this.pending.values()) {
         clearTimeout(p.timer);
-        p.reject(Error('connector_outcome_unknown'));
+        p.reject(new TransportFailure('connector_outcome_unknown', true));
       }
       this.pending.clear();
       for (const s of [...this.sockets('device'), ...this.sockets('bridge')])
@@ -391,7 +396,7 @@ export class WishosRoom extends DurableObject<WishosCloudEnv> {
   }
   private host(path: string, payload?: unknown) {
     const socket = this.sockets('connector')[0];
-    if (!socket) throw new CloudError(503, 'connector_offline');
+    if (!socket) throw new TransportFailure('connector_offline', false);
     if (this.pending.size >= 16) throw new CloudError(429, 'connector_capacity');
     const id = crypto.randomUUID();
     return new Promise<unknown>((resolve, reject) => {
@@ -539,12 +544,30 @@ export class WishosRoom extends DurableObject<WishosCloudEnv> {
       const raw = async (p: ControlInput): Promise<ControlReply> => {
         if (this.sockets('connector').length) return (await this.host(path, p)) as ControlReply;
         const wire = this.wires.get(id!);
-        if (!wire?.boot) throw new CloudError(503, 'device_offline');
+        if (!wire?.ready) throw new TransportFailure('device_not_ready', false);
         return wire.rpc(p.path, p.method, {
           ...p.args,
           ...(p.expected_boot_id ? { expected_boot_id: p.expected_boot_id } : {}),
         });
       };
+      const expected = input.expected_boot_id ?? this.wires.get(id!)?.boot;
+      const recovery: DispatchRecovery | undefined = expected
+        ? {
+            wait: async (deadline) => {
+              while (Date.now() < deadline) {
+                const current = this.wires.get(id!);
+                if (current?.boot && current.boot !== expected)
+                  throw new TransportFailure('device_boot_changed_before_dispatch', false);
+                if (current?.ready || this.sockets('connector').length) {
+                  await dispatchPause();
+                  return;
+                }
+                await dispatchPause();
+              }
+              throw new TransportFailure('device_disconnected_before_dispatch', false);
+            },
+          }
+        : undefined;
       return this.control.invoke(
         id!,
         input,
@@ -563,15 +586,20 @@ export class WishosRoom extends DurableObject<WishosCloudEnv> {
                 method,
                 args,
                 expected_boot_id: input.expected_boot_id,
-                request_id: crypto.randomUUID(),
+                request_id:
+                  path === input.path && method === input.method
+                    ? input.request_id
+                    : crypto.randomUUID(),
               }),
             cloudLuaCompiler,
             input.path,
             input.method,
             input.args,
             AbortSignal.timeout(30000),
-            input.expected_boot_id ?? this.wires.get(id!)?.boot ?? '',
+            expected ?? '',
+            recovery,
           ),
+        recovery,
       );
     }
     if (this.sockets('connector').length) return this.host(path, payload);

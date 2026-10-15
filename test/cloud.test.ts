@@ -688,3 +688,101 @@ test('cloud MCP package tools deliver, await native admission and update whole f
     });
   }
 });
+
+test('a same-boot reconnect during install preparation rereads safely and dispatches installation only once', async () => {
+  const { PackageDevice } = await import('./fixtures/package-device.js');
+  const a = await installation(),
+    client = await connectMcp(await access(a.owner_token)),
+    wire = new WireDevice(),
+    native = new PackageDevice();
+  native.boot = wire.boot;
+  wire.descriptions = native.descriptions;
+  wire.resourceHandler = (c) => native.call(c);
+  let reconnected = false;
+  const call = async (name: string, args: any) => {
+    const reply: any = await client.callTool({ name, arguments: args });
+    assert(!reply.isError, JSON.stringify(reply));
+    return JSON.parse(reply.content[0].text);
+  };
+  const finish = async (id: string) =>
+    eventually(async () => {
+      const job = await call('read_resource_job', { id });
+      if (['failed', 'unknown'].includes(job.state)) throw Error(JSON.stringify(job));
+      return job.state === 'completed' ? job.result : false;
+    }, 20000);
+  const stage = async (path: string, text: string) => ({
+    path,
+    artifact_id: (await finish((await call('stage_resource', { text })).id)).id,
+  });
+  try {
+    const profile = await request('/v1/devices', { id: 'device', label: 'Device' }, a.owner_token),
+      url = base.replace('http:', 'ws:') + '/os/device?id=device';
+    await wire.connect(url, profile.body.token);
+    const files = [
+      await stage(
+        'app.json',
+        JSON.stringify({
+          format: 'wishos-app/1',
+          id: 'reconnect-app',
+          title: 'Reconnect',
+          entry: 'main.lua',
+        }),
+      ),
+      await stage('main.lua', 'return {}'),
+    ];
+    const prepared = await finish(
+      (await call('prepare_package', { device_id: 'device', expected_boot_id: wire.boot, files }))
+        .id,
+    );
+    await finish(
+      (
+        await call('deploy_package', {
+          device_id: 'device',
+          expected_boot_id: wire.boot,
+          files: prepared.files,
+          activate: true,
+        })
+      ).id,
+    );
+    wire.beforeRespond = async (c) => {
+      if (
+        !reconnected &&
+        native.revision === 1 &&
+        native.ticket?.state === 'validated' &&
+        c.path === '/sys/capabilities' &&
+        c.args.path === '/sys/apps'
+      ) {
+        reconnected = true;
+        wire.socket.terminate();
+        await wire.connect(url, profile.body.token);
+        return false;
+      }
+    };
+    const changed = await stage('main.lua', 'return {updated=true}');
+    const updated = await finish(
+      (
+        await call('update_package', {
+          device_id: 'device',
+          expected_boot_id: wire.boot,
+          application_id: 'reconnect-app',
+          expected_revision: 1,
+          replacements: [changed],
+        })
+      ).id,
+    );
+    assert(reconnected);
+    assert.equal(updated.state, 'installed');
+    assert.equal(native.revision, 2);
+    assert.equal(
+      native.calls.filter((c) => c.path === '/sys/apps' && c.method === 'install').length,
+      2,
+    );
+  } finally {
+    await client.close();
+    await wire.close();
+    await fetch(base + '/v1/installations', {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer ' + a.owner_token },
+    });
+  }
+});

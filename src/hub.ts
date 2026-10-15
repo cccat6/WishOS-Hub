@@ -1,3 +1,4 @@
+import { dispatchPause, type DispatchRecovery } from './dispatch-recovery.js';
 import { ResourceJobs } from './resource-jobs.js';
 import { HostJobStore } from './connect/job-store.js';
 import { canonicalValue } from './control-receipts.js';
@@ -330,17 +331,45 @@ export class Hub {
     this.timer.unref();
   }
   invokeDevice(id: string, path: string, method: string, args: Record<string, unknown>) {
-    const peer = this.osPeers.get(id);
-    if (!peer) throw new TransportFailure('device_disconnected', false);
+    const expected =
+      typeof args.expected_boot_id === 'string'
+        ? args.expected_boot_id
+        : this.osPeers.get(id)?.boot;
+    const rpc: DeviceRpc = (p, m, a) => {
+      const peer = this.osPeers.get(id);
+      if (!peer) throw new TransportFailure('device_disconnected', false);
+      return peer.rpc(p, m, a);
+    };
+    const recovery = this.deviceRecovery(id, expected);
     return guardedInvocation(
-      peer.rpc,
+      rpc,
       nodeLuaCompiler,
       path,
       method,
       args,
       this.serviceAbort.signal,
-      peer.boot,
+      expected ?? '',
+      recovery,
     );
+  }
+  deviceRecovery(id: string, boot?: string): DispatchRecovery | undefined {
+    const expected = boot ?? this.osPeers.get(id)?.boot;
+    if (!expected) return undefined;
+    return {
+      wait: async (deadline) => {
+        while (Date.now() < deadline) {
+          const current = this.osPeers.get(id);
+          if (current?.boot && current.boot !== expected)
+            throw new TransportFailure('device_boot_changed_before_dispatch', false);
+          if (current?.online) {
+            await dispatchPause();
+            return;
+          }
+          await dispatchPause();
+        }
+        throw new TransportFailure('device_disconnected_before_dispatch', false);
+      },
+    };
   }
   configureDevice(device: DeviceConfig) {
     if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(device.id) || device.token.length > 96)

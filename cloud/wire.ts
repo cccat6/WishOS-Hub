@@ -113,6 +113,9 @@ export class CloudWire {
       this.fatal();
     }
   }
+  get ready() {
+    return !this.closed && !!this.boot;
+  }
   get busy() {
     return this.pending.size > 0;
   }

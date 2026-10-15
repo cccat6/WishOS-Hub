@@ -22,6 +22,7 @@ export class WireDevice {
   boot = 'fixture-boot';
   descriptions: Record<string, any> = {};
   board?: Record<string, unknown>;
+  beforeRespond?: (call: any) => Promise<boolean | void> | boolean | void;
   resourceHandler?: (call: any) => Promise<unknown> | unknown;
   handler?: (call: any) => Promise<unknown> | unknown;
   private bytes = Buffer.alloc(4096);
@@ -63,6 +64,7 @@ export class WireDevice {
     return this;
   }
   private async respond(call: any, socket: WebSocket, boot: string) {
+    if ((await this.beforeRespond?.(call)) === false) return;
     let result: any = {};
     let ok = true,
       error: string | undefined;

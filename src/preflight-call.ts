@@ -1,3 +1,5 @@
+import { recoverDispatch, type DispatchRecovery } from './dispatch-recovery.js';
+import { TransportFailure } from './transport-failure.js';
 import { Buffer } from 'node:buffer';
 import type { DeviceRpc } from './os-remote.js';
 import type { LuaCompilerFactory } from './lua-compiler.js';
@@ -13,6 +15,7 @@ export async function preflightInvocation(
   args: Record<string, any>,
   signal: AbortSignal,
   depth = 0,
+  recovery?: DispatchRecovery,
 ): Promise<void> {
   if (path === '/sys/operations' && method === 'request') {
     if (
@@ -30,10 +33,12 @@ export async function preflightInvocation(
       args.args ?? {},
       signal,
       depth + 1,
+      recovery,
     );
   }
+  const reads: DeviceRpc = (p, m, a) => recoverDispatch(() => rpc(p, m, a), recovery, true);
   const read = async (p: string, m: string, a: Record<string, unknown> = {}) => {
-    const r = await rpc(p, m, a);
+    const r = await reads(p, m, a);
     if (!r.ok) throw new PreflightError('target_preparation', { detail: p + ':' + r.error });
     return r.result;
   };
@@ -60,7 +65,7 @@ export async function preflightInvocation(
       if (typeof file !== 'string' || !file) throw new PreflightError('runtime_file_required');
       source = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
         await readDeviceFile(
-          rpc,
+          reads,
           file,
           metadata.entry_source_limit_bytes ?? state.source_limit_bytes ?? 1024 * 1024,
           signal,
@@ -132,23 +137,30 @@ export async function guardedInvocation(
   args: Record<string, any>,
   signal: AbortSignal,
   boot: string,
+  recovery?: DispatchRecovery,
 ) {
   const checked = bootRpc(
     rpc,
     typeof args.expected_boot_id === 'string' ? args.expected_boot_id : boot,
   );
   try {
-    await preflightInvocation(checked, compiler, path, method, args, signal);
+    await preflightInvocation(checked, compiler, path, method, args, signal, 0, recovery);
   } catch (error) {
     return {
       ok: false,
       boot_id: boot,
-      error: error instanceof Error ? error.message : 'preflight_unavailable',
+      error:
+        error instanceof TransportFailure
+          ? 'preflight_transport_unavailable'
+          : error instanceof Error
+            ? error.message
+            : 'preflight_unavailable',
       result: {
         not_dispatched: true,
+        ...(error instanceof TransportFailure ? { preparation_error: error.message } : {}),
         ...(error instanceof PreflightError ? { diagnostics: error.diagnostics } : {}),
       },
     };
   }
-  return rpc(path, method, args);
+  return recoverDispatch(() => rpc(path, method, args), recovery, false);
 }

@@ -1,3 +1,5 @@
+import { ResourceReplyError } from './resource-reply-error.js';
+import { TransportFailure } from './transport-failure.js';
 export type ResourceJob = {
   id: string;
   fingerprint: string;
@@ -69,7 +71,10 @@ export class ResourceJobs {
         (error) => {
           // A cancelled delivery might already have committed. Preserve uncertainty.
           job.state =
-            kind === 'deliver' && !(error instanceof Error && error.name === 'PreflightError')
+            kind === 'deliver' &&
+            !(error instanceof ResourceReplyError) &&
+            !(error instanceof TransportFailure && !error.dispatched) &&
+            !(error instanceof Error && error.name === 'PreflightError')
               ? 'unknown'
               : 'failed';
           job.error = error instanceof Error ? error.message : 'resource_job_failed';
