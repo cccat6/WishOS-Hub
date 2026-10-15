@@ -105,8 +105,28 @@ export class ControlGuard {
     execute: () => Promise<ControlReply>,
     recovery?: DispatchRecovery,
   ) {
-    const schema = await recoverDispatch(describe, recovery, true);
-    if (!schema.ok) return schema;
+    let schema: ControlReply;
+    try {
+      schema = await recoverDispatch(describe, recovery, true);
+    } catch (error) {
+      return {
+        ok: false,
+        boot_id: input.expected_boot_id ?? '',
+        error: 'control_preparation_unavailable',
+        result: {
+          not_dispatched: true,
+          preparation_error: error instanceof Error ? error.message : 'capability_read_failed',
+        },
+      };
+    }
+    if (!schema.ok)
+      return {
+        ...schema,
+        result: {
+          ...(schema.result && typeof schema.result === 'object' ? schema.result : {}),
+          not_dispatched: true,
+        },
+      };
     const readMethods =
       (schema.result as { read_methods?: string })?.read_methods?.split(',') ?? [];
     if (readMethods.includes(input.method)) return recoverDispatch(execute, recovery, true);

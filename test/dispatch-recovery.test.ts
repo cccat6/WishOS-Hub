@@ -199,3 +199,40 @@ test('a socket send exception closes the peer and preserves dispatched versus no
     (e: any) => e instanceof TransportFailure && e.dispatched === false,
   );
 });
+
+test('exhausted readonly capability preparation cannot mark the requested mutation as dispatched', async () => {
+  const db = new DatabaseSync(':memory:'),
+    guard = new ControlGuard(new HostControlStore(db));
+  let mutations = 0;
+  try {
+    const reply = await guard.invoke(
+      'd',
+      {
+        path: '/sys/apps',
+        method: 'install',
+        args: {},
+        expected_boot_id: 'b',
+        request_id: 'before-claim',
+      },
+      async () => {
+        throw new TransportFailure('rpc_outcome_unknown', true);
+      },
+      async () => {
+        mutations++;
+        return { ok: true, boot_id: 'b', result: {} };
+      },
+      {
+        windowMs: 1,
+        wait: async () => {
+          await new Promise((r) => setTimeout(r, 5));
+        },
+      },
+    );
+    assert.equal(reply.ok, false);
+    assert.equal((reply.result as any).not_dispatched, true);
+    assert.equal(reply.error, 'control_preparation_unavailable');
+    assert.equal(mutations, 0);
+  } finally {
+    db.close();
+  }
+});
