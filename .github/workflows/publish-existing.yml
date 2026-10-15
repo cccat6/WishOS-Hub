@@ -3,11 +3,18 @@ on:
   workflow_dispatch:
     inputs:
       run_id:
-        description: Successful Build and release run ID
+        description: Successful build run ID; packages are never rebuilt here
         required: true
       tag:
-        description: Existing release tag for that exact source commit
+        description: Existing preview tag for the exact source commit
         required: true
+      replace_existing:
+        description: Explicitly replace an existing preview with the selected artifact set
+        type: boolean
+        default: false
+concurrency:
+  group: wishos-release-${{ inputs.tag }}
+  cancel-in-progress: false
 permissions:
   actions: read
   contents: write
@@ -18,32 +25,20 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       RUN_ID: ${{ inputs.run_id }}
       RELEASE_TAG: ${{ inputs.tag }}
+      REPLACE_EXISTING: ${{ inputs.replace_existing }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag }}
-      - name: Verify provenance
-        shell: bash
-        run: |
-          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .conclusion)" = success
-          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .head_sha)" = "$(git rev-parse HEAD)"
-          gh release view "$RELEASE_TAG" --json isPrerelease --jq .isPrerelease | grep -qx true
+      - uses: actions/setup-node@v4
+        with: { node-version: '24.22.0' }
+      - name: Pin successful build and artifact IDs
+        id: source
+        run: node scripts/publish-release.mjs prepare
       - uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
           run-id: ${{ inputs.run_id }}
-          pattern: wishos-hub-*
+          artifact-ids: ${{ steps.source.outputs.artifact_ids }}
           path: release-assets
           merge-multiple: true
-      - name: Verify every archive digest
-        shell: bash
-        run: |
-          cd release-assets
-          test "$(find . -name '*.sha256' | wc -l)" -ge 1
-          sha256sum -c *.sha256
-          sha256sum *.tar.gz *.zip > SHA256SUMS
-      - name: Publish unchanged archives
-        shell: bash
-        run: |
-          find release-assets -maxdepth 1 -type f -print0 | xargs -0 gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber
-          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json url,assets
+      - name: Publish one verified generation
+        run: node scripts/publish-release.mjs publish release-assets
