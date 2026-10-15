@@ -11,9 +11,12 @@ import { fileURLToPath } from 'node:url';
 import { Scene } from './protocol.js';
 import { StreamRaster as Raster, MAX_RASTER_BYTES } from './raster.js';
 const root = fileURLToPath(new URL('../', import.meta.url));
-const fontCatalog = JSON.parse(
-  await readFile(join(root, 'assets/fonts/catalog.json'), 'utf8'),
-) as Record<string, { family: string; files: string[] }>;
+let fontCatalog: Promise<Record<string, { family: string; files: string[] }>> | undefined;
+function legacyFontCatalog(): Promise<Record<string, { family: string; files: string[] }>> {
+  return (fontCatalog ??= readFile(join(root, 'assets/fonts/catalog.json'), 'utf8').then((text) =>
+    JSON.parse(text),
+  ));
+}
 const python =
   process.env.NOTES_RENDER_PYTHON ??
   (existsSync(join(root, '.venv/bin/python')) ? join(root, '.venv/bin/python') : 'python3');
@@ -187,7 +190,7 @@ export async function svgRaster(
       maxBuffer: 65536,
       env: { PATH: process.env.PATH ?? '' },
     });
-    const chosenFont = fontCatalog[options.font_family ?? 'noto']!;
+    const chosenFont = (await legacyFontCatalog())[options.font_family ?? 'noto']!;
     const fonts = {
       fontFiles: chosenFont.files.map((file) => join(root, 'assets/fonts', file)),
       loadSystemFonts: false,

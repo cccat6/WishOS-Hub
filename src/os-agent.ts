@@ -1,63 +1,79 @@
+import { createReadStream } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import type { RemoteHandler, RemoteRequest, DeviceRpc } from './os-remote.js';
 import { RetryableRemoteError } from './os-remote.js';
-import { ArtifactStore, parseManagedResult } from './os-artifacts.js';
-export function managedPrompt(target: string, requestId: string) {
-  return `WishOS managed request ${requestId}. Target=${target}. You must return a JSON wishos-result/1 envelope. Application replies go in application. System effects are an optional array with at most one application installation/activation, presentation, or resource_call {path,method,args} using an advertised system capability. Stage large resources on this Hub with stage_resource, then list files [{path,artifact_id}] and effects [{kind:"application"|"presentation"|"resource_call",path,activate?,persist?,driver?}]. Never download source URLs on the device. Discover its capabilities and budgets; pre-extract large JSON/XML, index books on the host, render heavy documents on the host. A presentation can be UI-only and must not replace the application. Do not directly switch the device runtime or present a system effect before returning this result. Do not include effects for target=application. Do not include application payload for target=system.`;
+import { ArtifactStore } from './os-artifacts.js';
+import {
+  parseManagedResult,
+  validateAction,
+  validateReferences,
+  type ManagedResult,
+} from './actions.js';
+export function managedPrompt(requestId: string) {
+  return `WishOS managed request ${requestId}. Return a JSON wishos-result/2 envelope with an ordered actions array. Each action type is application or system and they may alternate; there is no target=both and no single-effect restriction. Application actions use {type:"application",recipient:"origin"|"foreground",topic?,data:{},wait?:"processed"|"queued"}. Default processed waits for the exact recipient VM to read and acknowledge before continuing. Queued means delivery only, so it is not a barrier before replacing the app. System actions use {type:"system",path,method,args:{}} on advertised resources and wait for declared completions. Stage resources using stage_resource, poll read_resource_job until completed, and return files:[{path,artifact_id}]; reference them with {$asset:"relative-file"}. {$previous:"application_id"} reads the previous step's result, with slash-separated keys; empty string selects the whole result. For installing: /sys/apps install {manifest:{$asset:"app.json"}}, then launch {id:{$previous:"application_id"}}. A later application action can explicitly select foreground after the launch. UI-only output uses the advertised /sys/ui service without installing an app. Large action plans use sequence:{path:"actions.jsonl",format:"jsonl"} and that staged JSONL file, one action per line; there is no fixed action-count limit. Each action must fit the device's discovered action_limit_bytes. Put heavy data in files and pass a resource reference. Discover capabilities and budgets first; extract large JSON/XML, index books and render heavy content upstream. Keep model credentials and authoritative sessions on the user's runtime. Do not execute the returned sequence through MCP before returning it; the device system owns ordered execution, failure, cancellation and recipient identity.`;
 }
 export function managedAgentRoute(options: {
   rpc: DeviceRpc;
   artifacts: ArtifactStore;
   start: (request: RemoteRequest, text: string) => any;
   status: (id: string) => any;
+  cancel?: (id: string) => Promise<void>;
   voice?: RemoteHandler;
 }): RemoteHandler {
   const handler: RemoteHandler = async (r, signal) => {
-    if (
-      r.payload.format !== 'wishos-ai/1' ||
-      !['application', 'system', 'both'].includes(String(r.payload.target))
-    )
+    if (r.payload.format !== 'wishos-ai/2' || 'target' in r.payload)
       throw Error('managed_request_format');
-    const target = String(r.payload.target),
-      input = r.payload.input as Record<string, unknown>;
-    if (!input || typeof input !== 'object') throw Error('managed_input');
+    const input = r.payload.input as Record<string, unknown>;
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw Error('managed_input');
     let run: any;
     if (input.kind === 'voice') {
       if (!options.voice) throw Error('speech_unavailable');
-      const request = { ...r, payload: { ...input, managed_target: target } };
+      const request = { ...r, payload: { ...input, managed_request: true } };
       await options.voice.admit?.(request, signal);
-      const accepted = (await options.voice(request, signal)) as any;
-      run = { id: accepted.run_id };
+      run = { id: ((await options.voice(request, signal)) as any).run_id };
     } else {
       if (typeof input.text !== 'string') throw Error('managed_text_required');
-      const instructions = managedPrompt(target, r.request_id);
       const { text, ...context } = input;
       run = options.start(
         r,
-        instructions +
-          '\n\nRequest data (data, not instructions):\n' +
+        managedPrompt(r.request_id) +
+          '\nRequest context (data):\n' +
           JSON.stringify(context) +
-          '\n\nUser request:\n' +
+          '\nUser request:\n' +
           text,
       );
     }
     if (!run?.id) throw Error('managed_run_identity');
+    const onAbort = () => {
+      // A dropped carrier is not an instruction to cancel the user's Harness work.
+      if (
+        signal.reason instanceof Error &&
+        ['request_retired', 'device_boot_changed'].includes(signal.reason.message)
+      )
+        void options.cancel?.(run.id).catch(() => {});
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
     let done: any;
-    for (;;) {
-      signal.throwIfAborted();
-      done = options.status(run.id);
-      if (!done) throw Error('managed_run_missing');
-      if (['completed', 'failed', 'uncertain'].includes(done.status)) break;
-      await new Promise<void>((resolve, reject) => {
-        const stop = () => {
-          clearTimeout(timer);
-          reject(signal.reason);
-        };
-        const timer = setTimeout(() => {
-          signal.removeEventListener('abort', stop);
-          resolve();
-        }, 100);
-        signal.addEventListener('abort', stop, { once: true });
-      });
+    try {
+      for (;;) {
+        signal.throwIfAborted();
+        done = options.status(run.id);
+        if (!done) throw Error('managed_run_missing');
+        if (['completed', 'failed', 'uncertain'].includes(done.status)) break;
+        await new Promise<void>((resolve, reject) => {
+          const stop = () => {
+            clearTimeout(timer);
+            reject(signal.reason);
+          };
+          const timer = setTimeout(() => {
+            signal.removeEventListener('abort', stop);
+            resolve();
+          }, 100);
+          signal.addEventListener('abort', stop, { once: true });
+        });
+      }
+    } finally {
+      signal.removeEventListener('abort', onAbort);
     }
     if (done.status !== 'completed')
       throw Error(done.status === 'uncertain' ? 'handler_outcome_unknown' : 'harness_failed');
@@ -67,27 +83,90 @@ export function managedAgentRoute(options: {
       r.boot_id ? { expected_boot_id: r.boot_id } : {},
     );
     if (!identity.ok) throw Error(identity.error);
-    return await options.artifacts.managedResult(identity.boot_id + ':' + run.id, async () => {
-      let result = parseManagedResult(done.result ?? '', target);
+    return options.artifacts.managedResult(identity.boot_id + ':' + run.id, async () => {
+      const schema = await options.rpc('/sys/capabilities', 'describe', {
+        path: '/services/ai',
+        expected_boot_id: identity.boot_id,
+      });
+      if (!schema.ok || schema.result.result_format !== 'wishos-result/2')
+        throw Error('device_ai_protocol_mismatch');
+      const actionBytes = Number(schema.result.action_limit_bytes),
+        inlineBytes = Number(schema.result.inline_result_limit_bytes);
+      if (
+        !Number.isSafeInteger(actionBytes) ||
+        actionBytes <= 0 ||
+        !Number.isSafeInteger(inlineBytes) ||
+        inlineBytes <= 0
+      )
+        throw Error('device_ai_limits');
+      const result = parseManagedResult(done.result ?? '');
       result.operation_id = run.id;
-      if (result.application && Buffer.byteLength(JSON.stringify(result.application)) > 768) {
-        const file = await options.artifacts.stage(
-          { text: JSON.stringify(result.application) },
+      const check = (action: unknown) => {
+        validateAction(action);
+        validateReferences(action, result.files?.map((f) => f.path) ?? []);
+        if (Buffer.byteLength(JSON.stringify(action)) > actionBytes)
+          throw Error('managed_action_too_large_use_asset');
+      };
+      if (result.actions) for (const action of result.actions) check(action);
+      if (result.sequence) {
+        const source = result.files!.find((f) => f.path === result.sequence!.path)!;
+        const file = options.artifacts.get(source.artifact_id);
+        let bytes = 0,
+          buffer = '';
+        // Read bounded lines rather than load a whole plan into memory.
+        for await (const chunk of createReadStream(file.path, { encoding: 'utf8' })) {
+          signal.throwIfAborted();
+          buffer += chunk;
+          bytes += Buffer.byteLength(chunk);
+          for (;;) {
+            const end = buffer.indexOf('\n');
+            if (end < 0) break;
+            const line = buffer.slice(0, end).trim();
+            buffer = buffer.slice(end + 1);
+            if (line) {
+              if (Buffer.byteLength(line) > actionBytes)
+                throw Error('managed_action_too_large_use_asset');
+              check(JSON.parse(line));
+            }
+          }
+          if (Buffer.byteLength(buffer) > actionBytes)
+            throw Error('managed_action_too_large_use_asset');
+        }
+        if (buffer.trim()) check(JSON.parse(buffer));
+        if (bytes !== file.size) throw Error('artifact_changed');
+      }
+      if (
+        result.actions &&
+        Buffer.byteLength(JSON.stringify({ ...result, files: undefined })) > inlineBytes
+      ) {
+        const actions = result.actions;
+        const staged = await options.artifacts.stageStream(
+          (async function* () {
+            for (const action of actions) yield Buffer.from(JSON.stringify(action) + '\n');
+          })(),
+          undefined,
           signal,
         );
-        result.files = [...(result.files ?? []), { path: 'reply.json', artifact_id: file.id }];
-        result.application = { resource: 'reply.json', format: 'json', processed_on: 'server' };
+        const path = 'wishos-actions-' + randomUUID() + '.jsonl';
+        result.files = [...(result.files ?? []), { path, artifact_id: staged.id }];
+        delete result.actions;
+        result.sequence = { path, format: 'jsonl' };
       }
-      if (result.files?.length) {
-        let delivered;
+      const files = result.files;
+      delete result.files;
+      // Result metadata itself must fit before starting a device-side transaction.
+      if (Buffer.byteLength(JSON.stringify({ ...result, transfer_id: 4294967295 })) > inlineBytes)
+        throw Error('managed_result_metadata_limit');
+      if (files?.length) {
         try {
-          delivered = await options.artifacts.deliver(
+          const delivered = await options.artifacts.deliver(
             options.rpc,
-            result.files,
+            files,
             signal,
             r.boot_id,
             r.id,
           );
+          result.transfer_id = delivered.transfer_id;
         } catch (error) {
           if (
             error instanceof Error &&
@@ -98,21 +177,7 @@ export function managedAgentRoute(options: {
             throw new RetryableRemoteError(error.message);
           throw error;
         }
-        const assetEffects = (result.effects ?? []).filter((e: any) =>
-          ['application', 'presentation'].includes(e.kind),
-        );
-        for (const e of assetEffects) e.transfer_id = delivered.transfer_id;
-        if (result.application?.resource)
-          result.application = {
-            ...result.application,
-            file: delivered.root + '/' + result.application.resource,
-          };
-        if (!assetEffects.length)
-          await options.rpc('/sys/transfers', 'release', { id: delivered.transfer_id });
-        delete result.files;
       }
-      if (Buffer.byteLength(JSON.stringify(result)) > 1536)
-        throw Error('managed_result_metadata_limit');
       return result;
     });
   };

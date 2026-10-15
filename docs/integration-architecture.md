@@ -46,8 +46,9 @@ status fields in UI/metadata. A ready MCP connection alone is not `canTrigger`.
 
 ## Protocol findings
 
-- Current installed TypeScript MCP SDK is 1.30.1 and advertises protocols through
-  2025-11-25. Latest published specification is 2026-07-28: per-request metadata,
+- The public connector now pins official TypeScript MCP server/client 2.3.1
+  and explicitly negotiates 2026-07-28 plus older revisions. The inherited Notes
+  endpoint retains SDK 1.32.1 for compatibility. Specification 2026-07-28 includes: per-request metadata,
   `server/discover`, resultType, subscriptions and MRTR replace parts of the old
   initialize/session/GET-SSE model. Keep older clients working and test both
   generations; do not merely advertise the new date on old behavior.
@@ -99,13 +100,12 @@ Keep stable device and connector IDs plus scoped pairing grants. Use mDNS and
 stable `.local` hostnames to avoid fixed DHCP; manual addresses are optional.
 Advertise a `_wishos._tcp` service from a connector. The connector returns a
 paired endpoint profile, including its stable hostname and relay endpoint.
-The firmware owner will implement ordered endpoints in `/services/link`, retaining
+The firmware owner has implemented ordered endpoints in `/services/link`, retaining
 the single-endpoint legacy form. Do not invent another device protocol; retain
 `wishos-rpc/1`, boot IDs, operation IDs and existing bounded frame transport.
 Do not replay an uncertain mutating command just because the route changed.
 
-The firmware-facing proposed configuration (confirm exact schema with the parent
-before release) is:
+The firmware-facing confirmed configuration is:
 
     /services/link configure {
       settings: {
@@ -125,6 +125,14 @@ final schema and routing behavior; server task must not edit firmware itself.
 Relays/receivers authenticate pairing scope; cloud never accepts a model-provider
 key field. HTTP MCP payloads terminate at the MCP service, so claim no transcript
 persistence, not that the server cannot see any request bytes. TLS is not E2EE.
+
+## Ordered result contract
+
+The confirmed result/2 contract replaces the old target fields with an
+ordered action sequence. Each step belongs to application or system; steps may
+alternate freely. The terminal owns execution and receiver/lifecycle semantics.
+Do not extend the old single-effect result format. See device-link-contract.md
+and the parent's confirmed wishos-result/2 interface before publishing integration.
 
 ## Session and data ownership
 

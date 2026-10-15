@@ -1,3 +1,4 @@
+import { deliverBundle } from './bundle-transfer.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, stat, unlink } from 'node:fs/promises';
 import { join, resolve, posix } from 'node:path';
@@ -8,18 +9,56 @@ export type Artifact = { id: string; size: number; sha256: string; path: string 
 /** Host-only source retrieval. Device traffic contains native resources and
  * bounded control metadata, never an arbitrary origin URL or a whole book. */
 export class ArtifactStore {
+  private staging = new Set<string>();
+  private leases = new Map<string, number>();
+  private maintenance?: Promise<void>;
   private preparing = new Map<string, Promise<any>>();
   constructor(
     private db: DatabaseSync,
     readonly root: string,
     readonly maxBytes = 512 * 1024 * 1024,
+    readonly policy = { maxStoredBytes: 2 * 1024 * 1024 * 1024, ttlMs: 86400000 },
   ) {
+    db.exec(
+      'CREATE TABLE IF NOT EXISTS os_artifact_pending(id TEXT PRIMARY KEY,path TEXT,reserved INTEGER)',
+    );
     db.exec(
       'CREATE TABLE IF NOT EXISTS os_managed_results(key TEXT PRIMARY KEY,result TEXT NOT NULL)',
     );
     db.exec(
       'CREATE TABLE IF NOT EXISTS os_artifacts(id TEXT PRIMARY KEY,path TEXT NOT NULL,size INTEGER NOT NULL,sha256 TEXT NOT NULL,created INTEGER NOT NULL)',
     );
+  }
+  private async cleanup() {
+    if (this.maintenance) return this.maintenance;
+    const work = (async () => {
+      const rows = this.db.prepare('SELECT id,path FROM os_artifact_pending').all() as {
+        id: string;
+        path: string;
+      }[];
+      for (const row of rows)
+        if (!this.staging.has(row.id)) {
+          await unlink(row.path).catch((e) => {
+            if (e.code !== 'ENOENT') throw e;
+          });
+          this.db.prepare('DELETE FROM os_artifact_pending WHERE id=?').run(row.id);
+        }
+      for (const row of this.db
+        .prepare('SELECT id,path FROM os_artifacts WHERE created<?')
+        .all(Date.now() - this.policy.ttlMs) as { id: string; path: string }[]) {
+        if (this.leases.has(row.id)) continue;
+        await unlink(row.path).catch((e) => {
+          if (e.code !== 'ENOENT') throw e;
+        });
+        this.db.prepare('DELETE FROM os_artifacts WHERE id=?').run(row.id);
+      }
+    })();
+    this.maintenance = work;
+    try {
+      await work;
+    } finally {
+      if (this.maintenance === work) this.maintenance = undefined;
+    }
   }
   async managedResult(key: string, prepare: () => Promise<any>) {
     const saved = this.db.prepare('SELECT result FROM os_managed_results WHERE key=?').get(key) as
@@ -29,7 +68,14 @@ export class ArtifactStore {
     const prior = this.db
       .prepare("SELECT result FROM os_managed_results WHERE substr(key,instr(key,':')+1)=?")
       .all(key.slice(key.indexOf(':') + 1)) as { result: string }[];
-    if (prior.some((r) => JSON.parse(r.result).effects?.length))
+    if (
+      prior.some(
+        (r) =>
+          JSON.parse(r.result).actions?.length ||
+          JSON.parse(r.result).sequence ||
+          JSON.parse(r.result).effects?.length,
+      )
+    )
       throw Error('system_effect_reconciliation_required');
     const existing = this.preparing.get(key);
     if (existing) return existing;
@@ -59,12 +105,14 @@ export class ArtifactStore {
     const limit = input.limit_bytes ?? this.maxBytes;
     if (!Number.isSafeInteger(limit) || limit < 0 || limit > this.maxBytes)
       throw Error('artifact_limit');
+    if (input.text !== undefined && Buffer.byteLength(input.text) > limit)
+      throw Error('artifact_too_large');
     if (input.text !== undefined)
       return this.stageStream(
         (async function* () {
           yield Buffer.from(input.text!);
         })(),
-        limit,
+        Math.min(limit, Buffer.byteLength(input.text!)),
         signal,
       );
     const url = new URL(input.url!);
@@ -84,9 +132,29 @@ export class ArtifactStore {
     if (!Number.isSafeInteger(limit) || limit < 0 || limit > this.maxBytes)
       throw Error('artifact_limit');
     await mkdir(this.root, { recursive: true });
+    await this.cleanup();
+    const used = (
+      this.db.prepare('SELECT COALESCE(sum(size),0) n FROM os_artifacts').get() as { n: number }
+    ).n;
+    const reserved = (
+      this.db.prepare('SELECT COALESCE(sum(reserved),0) n FROM os_artifact_pending').get() as {
+        n: number;
+      }
+    ).n;
+    if (limit > this.policy.maxStoredBytes - used - reserved) throw Error('artifact_storage_quota');
     const id = randomUUID(),
-      path = join(resolve(this.root), id),
+      path = join(resolve(this.root), id);
+    this.staging.add(id);
+    this.db.prepare('INSERT INTO os_artifact_pending VALUES(?,?,?)').run(id, path, limit);
+    let file;
+    try {
       file = await open(path, 'wx');
+    } catch (e) {
+      this.staging.delete(id);
+      this.db.prepare('DELETE FROM os_artifact_pending WHERE id=?').run(id);
+      throw e;
+    }
+
     let bytes = 0;
     const hash = createHash('sha256');
     try {
@@ -114,6 +182,9 @@ export class ArtifactStore {
       await file.close().catch(() => {});
       await unlink(path).catch(() => {});
       throw e;
+    } finally {
+      this.staging.delete(id);
+      this.db.prepare('DELETE FROM os_artifact_pending WHERE id=?').run(id);
     }
   }
   async deliver(
@@ -123,206 +194,33 @@ export class ArtifactStore {
     expectedBoot?: string,
     remoteRequestId?: number,
   ) {
-    let boot = expectedBoot;
-    const rpc: DeviceRpc = async (path, method, args) => {
-      const reply = await transport(path, method, {
-        ...args,
-        ...(boot ? { expected_boot_id: boot } : {}),
-      });
-      if (boot && reply.boot_id !== boot) throw Error('device_boot_changed');
-      boot = reply.boot_id;
-      return reply;
-    };
-    if (!files.length || files.length > 512) throw Error('artifact_file_count');
-    const names = new Set<string>();
-    const resolved = files.map((f) => {
-      if (
-        !f.path ||
-        f.path.startsWith('/') ||
-        posix.normalize(f.path) !== f.path ||
-        f.path.split('/').includes('..') ||
-        f.path.includes('\\') ||
-        names.has(f.path)
-      )
-        throw Error('artifact_path');
-      names.add(f.path);
-      return { ...f, ...this.get(f.artifact_id), destination: f.path };
-    });
-    const call = async (method: string, args: any) => {
-      signal.throwIfAborted();
-      for (;;) {
-        signal.throwIfAborted();
-        const r = await rpc('/sys/transfers', method, args);
-        if (r.ok) return r.result;
-        if (['spi_busy', 'resource_busy', 'operation_active'].includes(r.error ?? '')) {
-          await new Promise((r) => setTimeout(r, 25));
-          continue;
-        }
-        throw Error(r.error ?? 'transfer_failed');
-      }
-    };
-    const total = resolved.reduce((n, f) => n + f.size, 0),
-      key = createHash('sha256')
-        .update(JSON.stringify(resolved.map((f) => [f.destination, f.sha256, f.size])))
-        .digest('hex');
-    const prepare = async (p: any) => {
-      const description = await rpc('/sys/capabilities', 'describe', { path: p.path });
-      if (!description.ok) throw Error(description.error);
-      const async = description.result?.async?.[p.method];
-      let result = await rpc(
-        async ? '/sys/operations' : p.path,
-        async ? 'request' : p.method,
-        async ? { path: p.path, method: p.method, args: p.args ?? {} } : (p.args ?? {}),
-      );
-      if (result.ok && result.result.completion_id) {
-        const id = result.result.completion_id;
+    return deliverBundle(transport, files, signal, expectedBoot, remoteRequestId, {
+      get: (id) => this.get(id),
+      open: async (item) => {
+        this.leases.set(item.id, (this.leases.get(item.id) ?? 0) + 1);
+        let file;
         try {
-          for (;;) {
-            signal.throwIfAborted();
-            const r = await rpc('/sys/operations', 'read', { id });
-            if (!r.ok) throw Error(r.error);
-            if (r.result.ready) {
-              result = { ...r, ok: async.success_events.includes(r.result.event) };
-              break;
-            }
-            await new Promise((r) => setTimeout(r, 25));
-          }
-        } finally {
-          await rpc('/sys/operations', 'release', { id });
+          file = await open(item.path, 'r');
+        } catch (e) {
+          this.leases.delete(item.id);
+          throw e;
         }
-      }
-      return result;
-    };
-    // Explicit delivery can prepare/refresh storage; discovery remains read-only.
-    const policy = await call('read', {});
-    let volumes = await rpc('/fs', 'mounts', {});
-    if (volumes.ok)
-      for (const target of policy.policy?.targets ?? []) {
-        let volume = volumes.result.providers.find((p: any) => p.id === target.provider);
-        if (!volume) continue;
-        if (!volume.available) {
-          if (!volume.prepare) continue;
-          const result = await prepare(volume.prepare);
-          if (!result.ok) {
-            const error =
-              result.error ?? result.result?.data?.error ?? 'storage_preparation_failed';
-            if (/memory|budget|busy|active|timeout|cancel/.test(error)) throw Error(error);
-            const state = await rpc(volume.prepare.path, 'read', {});
-            if (state.ok && state.result.link_ready) throw Error('storage_volume_unavailable');
-            continue;
-          }
-          volumes = await rpc('/fs', 'mounts', {});
-          volume = volumes.result.providers.find((p: any) => p.id === target.provider);
-        }
-        if (volume.capacity_refresh && (volume.free_needs_refresh || volume.free_bytes == null)) {
-          const r = await prepare(volume.capacity_refresh);
-          if (!r.ok) throw Error('storage_capacity_unavailable');
-        }
-        break;
-      }
-    const start = await call('begin', {
-      request_id: key,
-      ...(remoteRequestId ? { remote_request_id: remoteRequestId } : {}),
-      bytes: String(total),
-      files: files.length,
-    });
-    let committed = start.state === 'committed';
-    if (committed) return { transfer_id: start.id, root: start.root };
-    try {
-      for (const item of resolved.slice(start.files_complete ?? 0)) {
-        const file = await open(item.path, 'r');
-        try {
-          const info = await file.stat();
-          if (info.size !== item.size) throw Error('artifact_changed');
-          const opened = await call('file', {
-            id: start.id,
-            path: item.destination,
-            bytes: String(item.size),
-            sha256: item.sha256,
-          });
-          const bytes = Buffer.alloc(start.chunk_bytes);
-          let offset = Number(opened.file_offset ?? 0);
-          while (offset < item.size) {
-            const { bytesRead } = await file.read(
-              bytes,
-              0,
-              Math.min(bytes.length, item.size - offset),
-              offset,
-            );
-            if (!bytesRead) throw Error('artifact_short_read');
-            await call('chunk', {
-              id: start.id,
-              offset: String(offset),
-              hex: bytes.subarray(0, bytesRead).toString('hex'),
-            });
-            offset += bytesRead;
-          }
-          await call('close_file', { id: start.id });
-        } finally {
+        if ((await file.stat()).size !== item.size) {
           await file.close();
+          this.leases.delete(item.id);
+          throw Error('artifact_changed');
         }
-      }
-      const receipt = await call('commit', { id: start.id });
-      committed = true;
-      return { transfer_id: start.id, root: receipt.root };
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        !/disconnected|transport|outcome_unknown|timeout/i.test(error.message)
-      )
-        await rpc('/sys/transfers', 'abort', { id: start.id }).catch(() => {});
-      throw error;
-    }
+        return {
+          read: (buffer, offset, length, position) => file.read(buffer, offset, length, position),
+          close: async () => {
+            await file.close();
+            const n = this.leases.get(item.id) ?? 1;
+            if (n <= 1) this.leases.delete(item.id);
+            else this.leases.set(item.id, n - 1);
+          },
+        };
+      },
+    });
   }
 }
-export function parseManagedResult(raw: string, target: string) {
-  let result: any;
-  try {
-    result = JSON.parse(raw);
-  } catch {
-    if (target !== 'application') throw Error('managed_result_required');
-    result = { format: 'wishos-result/1', application: { text: raw }, effects: [] };
-  }
-  if (result?.format !== 'wishos-result/1' || !['application', 'system', 'both'].includes(target))
-    throw Error('managed_result_format');
-  if (
-    result.application !== undefined &&
-    (!result.application ||
-      typeof result.application !== 'object' ||
-      Array.isArray(result.application))
-  )
-    throw Error('managed_application_result');
-  if (
-    (target === 'system' && result.application !== undefined) ||
-    (target === 'application' && result.effects?.length)
-  )
-    throw Error('managed_result_scope');
-  if (result.effects !== undefined && (!Array.isArray(result.effects) || result.effects.length > 1))
-    throw Error('managed_effect_limit');
-  for (const e of result.effects ?? []) {
-    if (
-      !['application', 'presentation', 'resource_call'].includes(e.kind) ||
-      typeof e.path !== 'string'
-    )
-      throw Error('managed_effect');
-    const keys =
-      e.kind === 'application'
-        ? ['kind', 'path', 'activate', 'persist']
-        : e.kind === 'presentation'
-          ? ['kind', 'path', 'driver']
-          : ['kind', 'path', 'method', 'args'];
-    if (Object.keys(e).some((k) => !keys.includes(k))) throw Error('managed_effect_field');
-    for (const key of ['activate', 'persist'])
-      if (e[key] !== undefined && typeof e[key] !== 'boolean') throw Error('managed_effect_type');
-    if (
-      e.kind === 'resource_call' &&
-      (typeof e.method !== 'string' ||
-        !e.args ||
-        Array.isArray(e.args) ||
-        typeof e.args !== 'object')
-    )
-      throw Error('managed_effect_type');
-  }
-
-  return result;
-}
+export { parseManagedResult } from './actions.js';

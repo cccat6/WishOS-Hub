@@ -72,7 +72,7 @@ export function voiceRoute(
       'begin',
       {
         sample_rate: capture.sample_rate,
-        ...(r.payload.managed_target ? { managed_target: r.payload.managed_target } : {}),
+        ...(r.payload.managed_request ? { managed_request: r.payload.managed_request } : {}),
         ...(Object.hasOwn(r.payload, 'session_id') ? { session_id: r.payload.session_id } : {}),
       },
       signal,

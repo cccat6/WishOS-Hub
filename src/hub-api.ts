@@ -1,5 +1,5 @@
 import type { HubApi } from './mcp-tools.js';
-export function hubApi(base: string, token = ''): HubApi {
+export function hubApi(base: string, token = '', signal?: AbortSignal): HubApi {
   return async (path, body) => {
     const response = await fetch(new URL(path, base), {
       method: body === undefined ? 'GET' : 'POST',
@@ -9,7 +9,9 @@ export function hubApi(base: string, token = ''): HubApi {
       },
       body: body === undefined ? undefined : JSON.stringify(body),
       redirect: 'error',
-      signal: AbortSignal.timeout(20000),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(20000)])
+        : AbortSignal.timeout(20000),
     });
     const data = await response.json();
     if (data?.payload?.op === 'display_rle' && typeof data.payload.data === 'string') {

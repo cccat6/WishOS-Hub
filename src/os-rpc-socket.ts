@@ -1,3 +1,4 @@
+import { TransportFailure } from './transport-failure.js';
 import { EventEmitter } from 'node:events';
 import { WebSocket } from 'ws';
 import type { DeviceRpc } from './os-remote.js';
@@ -76,18 +77,23 @@ export class OsRpcSocket extends EventEmitter {
   }
   readonly rpc: DeviceRpc = async (path, method, args) => {
     if (this.closed || !this.boot || this.socket.readyState !== WebSocket.OPEN)
-      throw Error('device_disconnected');
-    if (this.calls.size >= 8) throw Error('rpc_backpressure');
+      throw new TransportFailure('device_disconnected', false);
+    if (this.calls.size >= 8) throw new TransportFailure('rpc_backpressure', false);
     const id = this.sequence++;
     const data = Buffer.from(JSON.stringify({ id, path, method, args }));
-    if (data.length > LIMIT) throw Error('rpc_message_limit');
-    if (this.socket.bufferedAmount > 65536) throw Error('rpc_backpressure');
+    if (data.length > LIMIT) throw new TransportFailure('rpc_message_limit', false);
+    if (this.socket.bufferedAmount > 65536) throw new TransportFailure('rpc_backpressure', false);
     return await new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         const entry = this.calls.get(id);
         if (!entry) return;
         this.calls.delete(id);
-        reject(Error(entry.sent ? 'rpc_outcome_unknown' : 'rpc_queue_timeout'));
+        reject(
+          new TransportFailure(
+            entry.sent ? 'rpc_outcome_unknown' : 'rpc_queue_timeout',
+            entry.sent,
+          ),
+        );
         if (entry.sent) {
           this.socket.terminate();
           this.close();
@@ -121,7 +127,12 @@ export class OsRpcSocket extends EventEmitter {
     this.closed = true;
     for (const call of this.calls.values()) {
       clearTimeout(call.timer);
-      call.reject(Error(call.sent ? 'rpc_outcome_unknown' : 'device_disconnected_before_dispatch'));
+      call.reject(
+        new TransportFailure(
+          call.sent ? 'rpc_outcome_unknown' : 'device_disconnected_before_dispatch',
+          call.sent,
+        ),
+      );
     }
     this.calls.clear();
     this.emit('closed');

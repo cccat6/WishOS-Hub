@@ -1,6 +1,15 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 
+export class HarnessRpcError extends Error {
+  constructor(
+    readonly code: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 // Exact executable/args are administrator configuration, never a shell command built from speech.
 export class RpcProcess extends EventEmitter {
   child?: ChildProcessWithoutNullStreams;
@@ -15,6 +24,7 @@ export class RpcProcess extends EventEmitter {
     private args: string[],
     private cwd: string,
     private jsonrpc = false,
+    private environment: NodeJS.ProcessEnv = {},
   ) {
     super();
   }
@@ -25,6 +35,7 @@ export class RpcProcess extends EventEmitter {
       cwd: this.cwd,
       stdio: 'pipe',
       shell: false,
+      env: { ...process.env, ...this.environment },
     }));
     child.stdin.on('error', (e) => this.fail(e));
     child.stdout.setEncoding('utf8');
@@ -56,7 +67,8 @@ export class RpcProcess extends EventEmitter {
           this.pending.delete(msg.id);
           msg.error
             ? p.reject(
-                new Error(
+                new HarnessRpcError(
+                  msg.error.code,
                   `harness RPC error ${msg.error.code}: ${String(msg.error.message).slice(0, 300)}`,
                 ),
               )

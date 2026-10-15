@@ -1,35 +1,51 @@
 {
-  "name": "agentic-notes-hub",
-  "version": "0.3.0",
+  "name": "wishos-hub",
+  "version": "0.4.0-preview.1",
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22.13"
+    "node": ">=24.22"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/main.js",
-    "test": "npm run build && tsx --test test/*.test.ts",
+    "start": "node --use-env-proxy dist/connect/cli.js serve",
+    "test": "npm run build && tsx --test --test-concurrency=1 test/*.test.ts",
     "simulate": "tsx tools/simulate.ts",
-    "mcp": "node dist/hardware-mcp.js",
+    "mcp": "node --use-env-proxy dist/connect/cli.js --stdio",
     "format": "prettier --write src test tools *.json",
     "format:check": "prettier --check src test tools *.json",
-    "launch": "node dist/launch.js",
+    "launch": "node --use-env-proxy dist/connect/cli.js setup",
     "os-bridge": "node dist/os-remote-runner.js",
-    "mcp:hardware": "node dist/hardware-mcp.js"
+    "mcp:hardware": "node dist/hardware-mcp.js",
+    "check:cloud": "tsc -p cloud/tsconfig.json",
+    "cloud:bundle": "wrangler deploy --dry-run --config cloud/wrangler.jsonc --outdir build/cloud",
+    "cloud:deploy": "wrangler deploy --config cloud/wrangler.jsonc",
+    "package:release": "node scripts/package-release.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "@resvg/resvg-js": "^2.6.2",
-    "https-proxy-agent": "^7.0.6",
-    "ws": "^8.18.0",
-    "zod": "^3.24.0"
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "@modelcontextprotocol/server": "2.3.1",
+    "@resvg/resvg-js": "2.6.2",
+    "bonjour-service": "1.4.4",
+    "https-proxy-agent": "7.0.6",
+    "sharp": "0.35.5",
+    "ws": "8.22.0",
+    "zod": "3.25.76",
+    "zod-modern": "npm:zod@4.6.7"
   },
   "devDependencies": {
-    "@types/node": "^22.13.0",
-    "@types/ws": "^8.5.14",
+    "@cloudflare/workers-types": "5.20261015.1",
+    "@modelcontextprotocol/client": "2.3.1",
+    "@types/node": "22.20.4",
+    "@types/ws": "8.18.1",
     "prettier": "3.6.2",
-    "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "wrangler": "4.151.0"
+  },
+  "license": "MIT",
+  "description": "MCP, user-owned Harness connector and device relay for WishOS",
+  "bin": {
+    "wishos-hub": "dist/connect/cli.js"
   }
 }

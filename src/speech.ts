@@ -50,6 +50,7 @@ export class SpeechSettings {
     private store: Store,
     initial?: unknown,
     private legacy?: Asr,
+    preferInitial = false,
   ) {
     store.db.exec(
       'CREATE TABLE IF NOT EXISTS service_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
@@ -57,7 +58,9 @@ export class SpeechSettings {
     const saved = store.db
       .prepare("SELECT value FROM service_settings WHERE key='speech'")
       .get() as { value: string } | undefined;
-    this.config = SpeechConfig.parse(saved ? JSON.parse(saved.value) : (initial ?? {}));
+    this.config = SpeechConfig.parse(
+      saved && !preferInitial ? JSON.parse(saved.value) : (initial ?? {}),
+    );
   }
   get() {
     return structuredClone(this.config);

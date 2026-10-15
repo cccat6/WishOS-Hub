@@ -46,7 +46,6 @@ test('staging streams on server and transfers verified chunks without source URL
     assert.throws(() =>
       parseManagedResult(
         '{"format":"wishos-result/1","effects":[{"kind":"application","path":"app.json"}]}',
-        'application',
       ),
     );
   } finally {
@@ -64,11 +63,17 @@ test('application AI response and large data reference are separated from system
       ok: true,
       boot_id: 'b',
       result:
-        m === 'begin'
-          ? { id: 2, chunk_bytes: 1024 }
-          : m === 'commit'
-            ? { root: '/card/reply' }
-            : {},
+        m === 'describe'
+          ? {
+              result_format: 'wishos-result/2',
+              action_limit_bytes: 2048,
+              inline_result_limit_bytes: 1536,
+            }
+          : m === 'begin'
+            ? { id: 2, chunk_bytes: 1024 }
+            : m === 'commit'
+              ? { root: '/card/reply' }
+              : {},
     });
     const route = managedAgentRoute({
       rpc,
@@ -83,20 +88,39 @@ test('application AI response and large data reference are separated from system
       id: 1,
       request_id: 'request1',
       route: 'wishos.ai',
-      payload: { format: 'wishos-ai/1', target: 'application', input: { text: 'hi' } },
+      payload: { format: 'wishos-ai/2', input: { text: 'hi' } },
     };
     const result: any = await route(request, new AbortController().signal);
-    assert.equal(result.application.text, 'hello');
+    assert.equal(result.actions[0].data.text, 'hello');
     assert.equal(started, 1);
     const large = managedAgentRoute({
       rpc,
       artifacts: store,
       start: () => ({ id: 'r2' }),
-      status: () => ({ status: 'completed', result: 'x'.repeat(2000) }),
+      status: () => ({
+        status: 'completed',
+        result: JSON.stringify({
+          format: 'wishos-result/2',
+          actions: Array.from({ length: 200 }, (_, i) => ({
+            type: 'application',
+            data: { text: 'Step ' + i },
+          })),
+        }),
+      }),
     });
     const a: any = await large(request, new AbortController().signal);
-    assert.equal(a.application.file, '/card/reply/reply.json');
-    assert.equal(a.effects.length, 0);
+    assert.equal(a.sequence.format, 'jsonl');
+    assert.equal(a.transfer_id, 2);
+    assert.equal(a.actions, undefined);
+    const row = db
+      .prepare('SELECT path FROM os_artifacts ORDER BY created DESC LIMIT 1')
+      .get() as any;
+    const lines = (await readFile(row.path, 'utf8'))
+      .trim()
+      .split('\n')
+      .map((x) => JSON.parse(x));
+    assert.equal(lines.length, 200);
+    assert.equal(lines[199].data.text, 'Step 199');
   } finally {
     db.close();
     await rm(dir, { recursive: true, force: true });
@@ -245,25 +269,42 @@ test('binary artifacts stream without text encoding, enforce quota and remove pa
   }
 });
 
-test('large application data plus a resource effect releases assets without adding an invalid effect field', async () => {
+test('application and system actions share one verified bundle and retain their order', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'wish-both-')),
     db = new DatabaseSync(':memory:');
   try {
     const artifacts = new ArtifactStore(db, dir),
+      file = await artifacts.stage({ text: 'x'.repeat(2000) }),
       methods: string[] = [];
-    const rpc = async (_p: string, method: string) => {
+    const rpc = async (_path: string, method: string) => {
       methods.push(method);
       return {
         ok: true,
         boot_id: 'b',
         result:
-          method === 'begin'
-            ? { id: 4, chunk_bytes: 1024 }
-            : method === 'commit'
-              ? { root: '/card/result' }
-              : {},
+          method === 'describe'
+            ? {
+                result_format: 'wishos-result/2',
+                action_limit_bytes: 2048,
+                inline_result_limit_bytes: 1536,
+              }
+            : method === 'begin'
+              ? { id: 4, chunk_bytes: 1024 }
+              : method === 'commit'
+                ? { root: '/card/result' }
+                : {},
       };
     };
+    const actions = [
+      { type: 'application', recipient: 'origin', data: { resource: { $asset: 'reply.txt' } } },
+      {
+        type: 'system',
+        path: '/services/time',
+        method: 'configure',
+        args: { settings: { timezone: 'UTC0' } },
+      },
+      { type: 'application', recipient: 'foreground', data: { text: 'done' } },
+    ];
     const route = managedAgentRoute({
       rpc,
       artifacts,
@@ -271,16 +312,9 @@ test('large application data plus a resource effect releases assets without addi
       status: () => ({
         status: 'completed',
         result: JSON.stringify({
-          format: 'wishos-result/1',
-          application: { text: 'x'.repeat(2000) },
-          effects: [
-            {
-              kind: 'resource_call',
-              path: '/services/time',
-              method: 'configure',
-              args: { settings: { timezone: 'UTC0' } },
-            },
-          ],
+          format: 'wishos-result/2',
+          files: [{ path: 'reply.txt', artifact_id: file.id }],
+          actions,
         }),
       }),
     });
@@ -289,17 +323,14 @@ test('large application data plus a resource effect releases assets without addi
         id: 1,
         request_id: 'mixed',
         route: 'wishos.ai',
-        payload: {
-          format: 'wishos-ai/1',
-          target: 'both',
-          input: { text: 'large data and settings' },
-        },
+        payload: { format: 'wishos-ai/2', input: { text: 'mixed sequence' } },
       },
       new AbortController().signal,
     );
-    assert.equal(result.application.file, '/card/result/reply.json');
-    assert.equal(result.effects[0].transfer_id, undefined);
-    assert.equal(methods.at(-1), 'release');
+    assert.deepEqual(result.actions, actions);
+    assert.equal(result.transfer_id, 4);
+    assert.equal(methods.at(-1), 'commit');
+    assert.equal(result.files, undefined);
   } finally {
     db.close();
     await rm(dir, { recursive: true, force: true });

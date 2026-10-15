@@ -55,6 +55,9 @@ export class OsRemoteBridge {
   private boot?: string;
   private journal: RemoteJournal;
   private capacity: number;
+  get pendingCount() {
+    return this.tasks.size;
+  }
   constructor(
     private rpc: DeviceRpc,
     private handlers: Readonly<Record<string, RemoteHandler>>,
@@ -149,7 +152,7 @@ export class OsRemoteBridge {
         if (this.closed || signal.aborted) return;
         if (!peek.ok) throw Error(peek.error ?? 'device_peek_failed');
         if (this.boot && this.boot !== peek.boot_id) {
-          for (const task of this.tasks.values()) task.abort.abort();
+          for (const task of this.tasks.values()) task.abort.abort(Error('device_boot_changed'));
           this.tasks.clear();
         }
         this.boot = peek.boot_id;
@@ -183,7 +186,7 @@ export class OsRemoteBridge {
       }
       for (const [id, task] of this.tasks) {
         if (!seen.has(id) && task.state !== 'ready') {
-          task.abort.abort();
+          task.abort.abort(Error('request_retired'));
           this.tasks.delete(id);
           continue;
         }
@@ -215,7 +218,7 @@ export class OsRemoteBridge {
   }
   close() {
     this.closed = true;
-    for (const task of this.tasks.values()) task.abort.abort();
+    for (const task of this.tasks.values()) task.abort.abort(Error('bridge_closed'));
     this.tasks.clear();
   }
 }
@@ -266,7 +269,7 @@ export function harnessRoute(
     }
     if (response.status >= 500)
       throw new RetryableRemoteError(`harness_service_unavailable:${response.status}`);
-    const result = await response.json();
+    const result = (await response.json()) as { id?: string };
     if (!response.ok) throw Error(`harness_request_failed:${response.status}`);
     return { state: 'accepted', run_id: result.id };
   };

@@ -23,10 +23,8 @@ import {
 } from './rendering.js';
 import { imageFromUrl } from './image-source.js';
 
-export type HubApi = (
-  path: string,
-  body?: unknown,
-) => Promise<{ content: { type: 'text'; text: string }[] }>;
+export type { HubApi } from './api-types.js';
+import type { HubApi } from './api-types.js';
 let rendering = 0;
 async function render<T>(work: () => Promise<T>): Promise<T> {
   if (rendering >= 2)
@@ -419,9 +417,7 @@ export function createNotesMcp(api: HubApi) {
         {
           uri: uri.href,
           text: await readFile(
-            fileURLToPath(
-              new URL('../skills/agentic-notes/SKILL.md', import.meta.url),
-            ),
+            fileURLToPath(new URL('../skills/agentic-notes/SKILL.md', import.meta.url)),
             'utf8',
           ),
         },

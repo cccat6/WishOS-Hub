@@ -4,7 +4,7 @@ import {
   type AccountSpeechAuth,
 } from './codex-dictation.js';
 import { SpeechUnavailable } from '../speech.js';
-import { RpcProcess } from './rpc.js';
+import { RpcProcess, HarnessRpcError } from './rpc.js';
 import type { HarnessAdapter, AgentEvent } from './types.js';
 import { codexUsage } from './usage.js';
 
@@ -37,9 +37,20 @@ export class CodexAdapter implements HarnessAdapter {
       });
     await this.initialized;
   }
+  private async speechStatus(args: Record<string, unknown>) {
+    try {
+      return await this.rpc.request('getAuthStatus', args);
+    } catch (error) {
+      if (error instanceof HarnessRpcError && error.code === -32601)
+        throw new SpeechUnavailable(
+          'This Codex runtime does not expose native speech authentication',
+        );
+      throw error;
+    }
+  }
   private async speechAuth(): Promise<AccountSpeechAuth> {
     await this.initialize();
-    let status = await this.rpc.request('getAuthStatus', {
+    let status = await this.speechStatus({
       includeToken: true,
       refreshToken: false,
     });
@@ -50,7 +61,7 @@ export class CodexAdapter implements HarnessAdapter {
       throw new SpeechUnavailable('Sign in to ChatGPT for native dictation');
     let claims = JSON.parse(Buffer.from(status.authToken.split('.')[1], 'base64url').toString());
     if (typeof claims.exp === 'number' && claims.exp * 1000 < Date.now() + 60000) {
-      status = await this.rpc.request('getAuthStatus', { includeToken: true, refreshToken: true });
+      status = await this.speechStatus({ includeToken: true, refreshToken: true });
       if (typeof status.authToken !== 'string')
         throw new SpeechUnavailable('Account sign-in expired');
       claims = JSON.parse(Buffer.from(status.authToken.split('.')[1], 'base64url').toString());
