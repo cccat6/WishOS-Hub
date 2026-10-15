@@ -1,9 +1,10 @@
-/** Portable device-to-service bridge. Handler implementations belong to applications. */
+/** Portable transport bridge. Handlers are upstream service adapters; device apps use the managed system APIs. */
 import { createHash } from 'node:crypto';
 import { MemoryRemoteJournal, type RemoteJournal } from './os-journal.js';
 export type RemoteRequest = {
   id: number;
   request_id: string;
+  boot_id?: string;
   route: string;
   payload: Record<string, unknown>;
 };
@@ -161,6 +162,7 @@ export class OsRemoteBridge {
         if (!task && this.tasks.size < this.capacity) {
           const key = request.request_id || `${peek.boot_id}:${request.id}`;
           request.request_id = key;
+          request.boot_id = peek.boot_id;
           task = {
             boot: peek.boot_id,
             request,

@@ -21,6 +21,7 @@ import { osAudioPacket, type OsAudioChunk } from './os-audio.js';
 import { decodeVoicePacket } from './voice-codec.js';
 export type AudioConfig = {
   sample_rate: number;
+  managed_target?: 'application' | 'system' | 'both';
   session_id?: string | null;
   binding_group?: string;
   resolved_session_id?: string;
@@ -111,6 +112,7 @@ export class OsAudioIngress {
       if (
         ![
           'sample_rate',
+          'managed_target',
           'session_id',
           'binding_group',
           'resolved_session_id',
@@ -132,6 +134,11 @@ export class OsAudioIngress {
       (typeof value.session_id !== 'string' || value.session_id.length > 256)
     )
       throw new AudioError('audio_session');
+    if (
+      value.managed_target !== undefined &&
+      !['application', 'system', 'both'].includes(value.managed_target)
+    )
+      throw new AudioError('audio_managed_target');
     for (const [key, min, max] of [
       ['max_gap_ms', 0, 60000],
       ['max_missing_ms', 0, 3600000],

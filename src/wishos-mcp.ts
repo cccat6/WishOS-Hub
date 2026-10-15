@@ -8,7 +8,7 @@ export function createWishosMcp(api: HubApi) {
     { name: 'wishos', version: '1.0.0' },
     {
       instructions:
-        'Discover the selected device and resource capabilities first. Use /sys/apps for installed package references and lifecycle, and inspect the selected default package source as a hardware-specific reference. The launcher is an ordinary replaceable application. Preserve the independent /sys/navigation home/voice entry; explain controls, first-use guidance, help and task feedback when creating or changing an application. Do not introduce active/passive user work modes. Hardware drivers are compiled; UI, pages, input meanings and application behavior are ordinary runtime packages that can be replaced without firmware changes. Use advertised resource calls and file paths, never GPIO/register access. Keep deterministic work local; use a remote route only for an explicit application action. An accepted request is not physical completion: inspect its completion/event receipt. A timed-out mutation must be reconciled before retry. Display drivers declare their own colors, geometry and completion models; never infer them from the MCU or a previous device. Recordings are compressed blocks; durable upload, speech recognition, Harness admission and displayed output are separate stages. Use the existing Harness session tools for the user task, then explicitly present the result through the device resources.',
+        'Discover the selected device and resource capabilities first. Use /sys/apps for installed package references and lifecycle, and inspect the selected default package source as a hardware-specific reference. The launcher is an ordinary replaceable application. Preserve the independent /sys/navigation home/voice entry; explain controls, first-use guidance, help and task feedback when creating or changing an application. Do not introduce active/passive user work modes. Hardware drivers are compiled; UI, pages, input meanings and application behavior are ordinary runtime packages that can be replaced without firmware changes. UI layout, font/image rendering and presentation are system services; applications provide descriptions and behavior. Applications use /services/ai for managed AI requests with application/system/both targets; never implement provider or Harness protocols inside an app. The system processes wishos-result/1 results and coordinates replacement after notifying the origin. Stage large files/code/images on the Hub with stage_resource; do not send arbitrary source download URLs to the device. Inspect /sys/transfers storage policy, physical partitions, quotas and runtime parser budgets. Pre-extract large JSON/XML and index books upstream. Use a presentation effect for UI-only output. Inspect /sys/ui capabilities and a device-provided UI example before generating its document format. Logs and telemetry are separate system services; never include prompts, credentials, audio or arbitrary log text in telemetry. Use advertised resource calls and file paths, never GPIO/register access. Keep deterministic work local; use a remote route only for an explicit application action. An accepted request is not physical completion: inspect its completion/event receipt. A timed-out mutation must be reconciled before retry. Display drivers declare their own colors, geometry and completion models; never infer them from the MCU or a previous device. Recordings are compressed blocks; durable upload, speech recognition, Harness admission and displayed output are separate stages. Use the existing Harness session tools for the user task, then explicitly present the result through the device resources.',
     },
   );
   const invoke = async (
@@ -60,6 +60,16 @@ export function createWishosMcp(api: HubApi) {
     },
     ({ device_id, path, method, args, expected_boot_id }) =>
       invoke(device_id, path, method, args, expected_boot_id),
+  );
+  server.tool(
+    'stage_resource',
+    'Fetch a large source on the server, or stage generated text. Generated binary files can instead be streamed by execution tools to POST /api/os/artifacts/upload with application/octet-stream and Hub authorization. Return its artifact ID for a managed result files array; never send source URLs to device downloads.',
+    {
+      url: z.string().url().optional(),
+      text: z.string().optional(),
+      limit_bytes: z.number().int().positive().optional(),
+    },
+    (input) => api('/api/os/artifacts', input),
   );
   server.tool(
     'harness_usage',

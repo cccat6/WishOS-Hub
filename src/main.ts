@@ -55,6 +55,12 @@ const Config = z
     host: z.string().default('127.0.0.1'),
     port: z.number().int().min(1).max(65535).default(8787),
     database: z.string().default('./data/hub.sqlite'),
+    artifacts: z
+      .object({
+        root: z.string().default('./data/wishos-assets'),
+        maxFileBytes: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).default(536870912),
+      })
+      .default({}),
     adminTokenEnv: z.string().default('NOTES_ADMIN_TOKEN'),
     discoverDevices: z.boolean().default(false),
     discoveryTokenEnv: z.string().default('NOTES_DEVICE_TOKEN'),
@@ -170,6 +176,8 @@ const hub = new Hub({
   devices,
   store,
   audioLimits: c.audioLimits,
+  artifactRoot: c.artifacts.root,
+  artifactMaxBytes: c.artifacts.maxFileBytes,
   allowPowerCommands:
     process.env.NOTES_DISABLE_POWER_COMMANDS === '1' ? false : (c.allowPowerCommands ?? true),
   discoveryToken: c.discoverDevices ? secret(c.discoveryTokenEnv) : undefined,

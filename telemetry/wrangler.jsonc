@@ -1,0 +1,16 @@
+{
+  "name": "wishos-telemetry",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-15",
+  "workers_dev": false,
+  "routes": [{ "pattern": "telemetry.wishos.dev", "custom_domain": true }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "wishos-telemetry",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+    },
+  ],
+  "triggers": { "crons": ["17 3 * * *"] },
+  "observability": { "enabled": false },
+}

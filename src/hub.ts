@@ -1,3 +1,5 @@
+import { ArtifactStore } from './os-artifacts.js';
+import { managedAgentRoute, managedPrompt } from './os-agent.js';
 import { OsRpcSocket } from './os-rpc-socket.js';
 import { OsRemoteBridge, deviceRpc, type DeviceRpc, type RemoteHandler } from './os-remote.js';
 import { SqlRemoteJournal } from './os-journal.js';
@@ -37,6 +39,8 @@ export interface HubOptions {
   asr?: Asr;
   speech?: unknown;
   audioLimits?: Partial<typeof AudioLimits>;
+  artifactRoot?: string;
+  artifactMaxBytes?: number;
   allowPowerCommands?: boolean;
   discoveryToken?: string;
 }
@@ -123,6 +127,7 @@ export class Hub {
     }
   >();
   private osAudio: OsAudioIngress;
+  private artifacts: ArtifactStore;
   private osVoiceBindings = new Map<string, VoiceLane>();
   private voiceResults = new Map<
     string,
@@ -159,6 +164,11 @@ export class Hub {
     void p.finally(() => this.tasks.delete(p)).catch(() => {});
   }
   constructor(private options: HubOptions) {
+    this.artifacts = new ArtifactStore(
+      options.store.db,
+      options.artifactRoot ?? 'data/wishos-assets',
+      options.artifactMaxBytes,
+    );
     if (options.adminToken.length > 96 || /[\r\n]/.test(options.adminToken))
       throw new Error('invalid Hub token');
     this.devices = new Map(options.devices.map((d) => [d.id, d]));
@@ -266,6 +276,20 @@ export class Hub {
         return this.osAudio.status(d.id, id);
       }),
     };
+    handlers['wishos.ai'] = managedAgentRoute({
+      rpc: bound,
+      artifacts: this.artifacts,
+      voice: handlers.voice,
+      start: (r, text) =>
+        this.startRun(d.id, {
+          request_id: r.request_id,
+          text,
+          ...((r.payload.input as any)?.session_id !== undefined
+            ? { session_id: (r.payload.input as any).session_id }
+            : {}),
+        }),
+      status: (id) => this.options.store.run(id),
+    });
     const bridge = new OsRemoteBridge(bound, handlers, {
         journal: new SqlRemoteJournal(this.options.store.db, d.id),
       }),
@@ -912,7 +936,14 @@ export class Hub {
     if (!recognizer) throw Error('speech_unavailable');
     const text = await recognizer.transcribe(wav, signal);
     if (this.stopping) throw Error('hub_stopping');
-    const result = await this.submitVoice(id, voiceId, text, lane);
+    const result = await this.submitVoice(
+      id,
+      voiceId,
+      config.managed_target
+        ? managedPrompt(config.managed_target, voiceId) + '\nUser request:\n' + text
+        : text,
+      lane,
+    );
     return { ...result, transcript: text };
   }
   private voiceReceipt(id: string, stream: string): Record<string, unknown> | undefined {
@@ -941,9 +972,14 @@ export class Hub {
       throw new HttpError(400, 'audio_configuration');
     for (const key of Object.keys(raw))
       if (
-        !['sample_rate', 'session_id', 'max_gap_ms', 'max_missing_ms', 'max_loss_ratio'].includes(
-          key,
-        )
+        ![
+          'sample_rate',
+          'session_id',
+          'max_gap_ms',
+          'max_missing_ms',
+          'max_loss_ratio',
+          'managed_target',
+        ].includes(key)
       )
         throw new HttpError(400, 'audio_configuration_field');
     const d = this.device(id),
@@ -1234,6 +1270,13 @@ export class Hub {
       if (u.pathname !== '/api/speech' || !sameOrigin)
         throw new HttpError(403, 'browser origins not enabled');
     }
+    if (u.pathname === '/api/os/artifacts/upload' && req.method === 'POST') {
+      if (req.headers['content-type']?.split(';')[0] !== 'application/octet-stream')
+        throw new HttpError(415, 'application/octet-stream required');
+      return reply(res, 201, await this.artifacts.stageStream(req));
+    }
+    if (u.pathname === '/api/os/artifacts' && req.method === 'POST')
+      return reply(res, 201, await this.artifacts.stage(await body(req)));
     const osMatch = u.pathname.match(/^\/api\/os\/devices\/([a-zA-Z0-9_.:-]+)\/invoke$/);
     if (osMatch && req.method === 'POST') {
       const peer = this.osPeers.get(osMatch[1]!);
