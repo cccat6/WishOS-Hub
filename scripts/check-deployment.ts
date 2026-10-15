@@ -197,6 +197,32 @@ try {
   assert.equal(native.revision, 2);
   assert.equal(native.files.get('/card/revisions/2/main.lua')!.toString(), 'return {version=2}');
   assert(!native.reads.has('/card/revisions/1/image.bin'));
+  const tool = (await client.listTools()).tools.find((t) => t.name === 'update_package');
+  assert.equal((tool!.inputSchema as any).properties.stop_current_before_transfer.default, false);
+  native.preparationNeedsIdle = true;
+  native.preparationReady = false;
+  const explicitReplacement = await stage('main.lua', 'return {version=3}');
+  const explicit = await finish(
+    (
+      await call('update_package', {
+        device_id: 'test-device',
+        expected_boot_id: device.boot,
+        application_id: 'live-check',
+        expected_revision: 2,
+        replacements: [explicitReplacement],
+        activate: true,
+        stop_current_before_transfer: true,
+      })
+    ).id,
+  );
+  assert.equal(explicit.state, 'activated');
+  assert.equal(explicit.receipts.runtime_stop.loaded, false);
+  assert.equal(native.revision, 3);
+  assert.equal(
+    native.calls.filter((c) => c.path === '/sys/runtime' && c.method === 'stop').length,
+    1,
+  );
+
   console.log(
     JSON.stringify(
       {
@@ -217,6 +243,7 @@ try {
           'bad-code-no-device-write',
           'package-native-ticket-install-activate',
           'whole-file-update-local-copy',
+          'explicit-stop-after-preflight-before-preparation',
         ],
         physical_device: false,
         vendor_account: false,
