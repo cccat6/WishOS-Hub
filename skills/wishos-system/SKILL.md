@@ -1,39 +1,27 @@
 ---
 name: wishos-system
-description: Use WishOS portable system services for runtime execution, files, events, resource calls, rendering and managed AI. Read when composing applications or coordinating capabilities through the public system API.
+description: 使用 WishOS 执行、配置、事件、文件、显示和 AI 等系统服务。用于跨能力协调及生命周期处理，具体页面与交互仍由运行时应用定义。
 ---
 
-Discover the selected device's resource schemas and current boot before making
-calls. Configuration scope, desired/applied state, read methods, async completion
-and resource limits come from its metadata. These are different from a driver's
-hardware facts and an application's chosen policy.
+先发现资源方法、配置作用域、desired/applied 状态、异步完成方式和限制。
+硬件事实、驱动默认值、资源策略与应用行为各自独立，不能把某设备的数值写成全局规则。
 
-The system owns execution/loading, scheduling/admission, configuration, events,
-conditions, callbacks, files, UI parsing/layout/rendering, presentation and service
-coordination. Applications provide pages, styles, navigation and sequences of
-capability calls. A factory suite is an ordinary replaceable application reference.
+系统负责加载和调度、准入、配置、事件/条件、回调、文件、UI 解析/布局/字体图像渲染、
+呈现和服务协调。应用负责内容、页面、输入含义、导航和调用顺序；预置包用相同接口。
+系统管理多个已安装应用的启动、切换、清理，保证 home/voice 和系统配置的恢复入口可达。
 
-Use declared async operations and completion callbacks. A transport ACK, accepted
-operation, application ACK and physical display completion are distinct receipts.
-Respect display readiness; do not interrupt an active panel refresh. Handle inputs
-and concurrent audio according to runtime-configurable application behavior.
+异步操作按 schema 等待完成，之后释放文件、流、operation、验证票据等资源。
+传输 ACK、应用确认和屏幕完成不同。不要在 BUSY 刷新中断屏幕；其它输入/录音是否响应、
+如何反馈由可配置行为决定。替换应用不会把旧 VM 的回复误投到新实例。
 
-Keep handles and resource ownership until their declared completion, then release
-streams/files/operations/validation leases. Application replacement cannot redirect
-a result to another VM instance. The independent home/voice route remains reachable.
+读取实际存储提供者、容量、分区和配额。应用允许安装的卷由 install_providers 声明；
+下载位置另按系统的有序目标策略处理。内部 Flash 回退须显式允许并设置配额。
+预算合规不等于已预留内存或一定能启动，原生准入仍是最终依据。
 
-Read actual region/provider capacity and configured quotas; do not assume a fixed
-application memory limit, SD card, Flash fallback, display geometry or MCU family.
-Known budget compliance is not a guarantee of future free heap or successful native
-admission. Runtime memory/instruction limits still apply after validation.
+应用调用系统 AI API，上游 Hub 管理 Harness 协议。返回 application/system 有序动作，
+由系统解析并执行。轻量请求可用系统网络接口；超出本机预算的下载、解析、索引和绘图
+交给上游，资源与控制信封分开传输。远程函数并非每次都必须调用模型。
 
-Applications call the system AI API. The Hub adapts the selected user Harness;
-model/session/provider logic does not belong in hardware drivers. System-targeted
-and application-targeted results form an ordered action sequence. Keep deterministic
-local tasks local. Large source retrieval, indexing and heavy parsing/rendering
-happen upstream when the device's discovered budgets require it.
-
-Network, time/timezone, proxies, logs and telemetry are system services with
-configurable policies. Never place prompts, credentials, audio or arbitrary user
-file/log text into diagnostic telemetry. Recordings use independently decodable
-compressed blocks; storage/retention is explicit policy, not an implicit Flash spool.
+网络、代理、时钟/时区、日志和遥测是可配置系统服务。
+诊断不包含提示词、音频、凭据、任意文件或日志文本。
+录音压缩与暂存/保留规则分开：无可移动录音存储时不隐式落入内部 Flash。

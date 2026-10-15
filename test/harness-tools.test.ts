@@ -1,41 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
-import { codexThreadOptions } from '../src/adapters/codex-options.js';
 import { CodexAdapter } from '../src/adapters/codex.js';
 import { RpcProcess } from '../src/adapters/rpc.js';
-
-test('Notes configuration preserves arbitrary configured servers, host settings and instructions', () => {
-  const options = codexThreadOptions(
-    '/project',
-    'http://127.0.0.1:8787/mcp',
-    'TOKEN',
-    'Notes instructions',
-    {
-      model: 'existing-model',
-      developerInstructions: 'User custom workflow',
-      config: {
-        approval_policy: 'on-request',
-        mcp_servers: {
-          custom_calendar: { command: 'existing-server', args: ['run'] },
-          agentic_notes: { tool_timeout_sec: 99 },
-        },
-      },
-    },
-  );
-  assert.equal(options.model, 'existing-model');
-  assert.equal(options.config.approval_policy, 'on-request');
-  assert.deepEqual(options.config.mcp_servers.custom_calendar, {
-    command: 'existing-server',
-    args: ['run'],
-  });
-  assert.equal(options.config.mcp_servers.agentic_notes.url, 'http://127.0.0.1:8787/mcp');
-  assert.equal(options.config.mcp_servers.agentic_notes.tool_timeout_sec, 99);
-  assert.equal(options.config.mcp_servers.agentic_notes.enabled_tools, undefined);
-  assert.match(options.developerInstructions, /User custom workflow/);
-  assert.match(options.developerInstructions, /explicit user authorization/);
-  assert.doesNotMatch(options.developerInstructions, /Do not inspect project files/);
-});
 
 test('native permission and MCP form requests reach the user and grant only the requested turn scope', async () => {
   const fixture = fileURLToPath(new URL('./fixtures/harness.mjs', import.meta.url));

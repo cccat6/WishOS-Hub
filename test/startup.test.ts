@@ -1,114 +1,125 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { createServer } from 'node:net';
+import { spawn, execFileSync } from 'node:child_process';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomBytes } from 'node:crypto';
-import { setTimeout as delay } from 'node:timers/promises';
 import { once } from 'node:events';
-async function stop(c?: ChildProcess) {
-  if (!c || c.exitCode !== null) return;
-  const done = once(c, 'exit');
-  c.kill('SIGTERM');
-  await done;
-}
-test('documented Hub entrypoint and standalone simulator run end to end', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'notes-startup-'));
-  let hub: ChildProcess | undefined, sim: ChildProcess | undefined;
-  try {
-    const probe = createServer();
-    probe.listen(0, '127.0.0.1');
-    await once(probe, 'listening');
-    const port = (probe.address() as any).port;
-    await new Promise<void>((r) => probe.close(() => r()));
-    const config = join(dir, 'config.json');
-    writeFileSync(
-      config,
-      JSON.stringify({
-        port,
-        host: '127.0.0.1',
-        database: join(dir, 'db.sqlite'),
-        devices: [
-          {
-            id: 'sim-1',
-            protocol: 'notes',
-            tokenEnv: 'NOTES_DEVICE_TOKEN',
-            harness: { kind: 'mock' },
-          },
-        ],
-      }),
+test('public Node entrypoint starts outside checkout, serves setup and stops by its own identity', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wishos-startup-')),
+    entry = fileURLToPath(new URL('../dist/connect/cli.js', import.meta.url)),
+    child = spawn(
+      process.execPath,
+      [entry, 'serve', '--data-dir', root, '--host', '127.0.0.1', '--port', '0', '--no-browser'],
+      { cwd: tmpdir(), stdio: ['ignore', 'pipe', 'pipe'] },
     );
-    const cwd = fileURLToPath(new URL('..', import.meta.url));
-    const env = {
-      ...process.env,
-      NOTES_CONFIG: config,
-      NOTES_ADMIN_TOKEN: randomBytes(24).toString('hex'),
-      NOTES_DEVICE_TOKEN: randomBytes(24).toString('hex'),
-      NOTES_DEVICE_URL: `ws://127.0.0.1:${port}/device`,
-    };
-    const api = async (path: string, body?: unknown) => {
-      const r = await fetch(`http://127.0.0.1:${port}` + path, {
-        method: body ? 'POST' : 'GET',
-        headers: {
-          Authorization: `Bearer ${env.NOTES_ADMIN_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-        body: body ? JSON.stringify(body) : undefined,
-      });
-      assert.ok(r.ok);
-      return r.json();
-    };
-    async function wait(fn: () => Promise<any>) {
-      for (let n = 0; n < 200; n++) {
-        try {
-          const value = await fn();
-          if (value) return value;
-        } catch {}
-        await delay(20);
+  const exit = once(child, 'exit');
+  let errors = '';
+  child.stderr.on('data', (b) => (errors += b));
+  try {
+    let info: any;
+    for (let i = 0; i < 200; i++) {
+      if (child.exitCode !== null) throw Error('startup exited: ' + errors);
+      try {
+        info = JSON.parse(await readFile(join(root, 'running.json'), 'utf8'));
+        break;
+      } catch {
+        await new Promise((r) => setTimeout(r, 25));
       }
-      throw Error('entrypoint smoke timed out');
     }
-    hub = spawn(process.execPath, ['dist/main.js'], {
-      cwd,
-      env,
-      stdio: ['ignore', 'ignore', 'pipe'],
+    assert(info, 'startup timeout: ' + errors);
+    const base = 'http://127.0.0.1:' + info.port;
+    assert((await (await fetch(base + '/healthz')).json()).ok);
+    assert.match(await (await fetch(base)).text(), /WishOS/);
+    const status = JSON.parse(
+      execFileSync(process.execPath, [entry, 'status', '--data-dir', root], { encoding: 'utf8' }),
+    );
+    assert.equal(status.id, info.id);
+    // Async child: stop polls this HTTP process, so blocking execFileSync would deadlock it.
+    const stop = spawn(process.execPath, [entry, 'stop', '--data-dir', root], {
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
-    let errors = '';
-    hub.stderr?.on('data', (b) => (errors += b));
-    await wait(() => api('/healthz'));
-    sim = spawn(process.execPath, ['--import', 'tsx', 'tools/simulate.ts'], {
-      cwd,
-      env,
-      stdio: ['ignore', 'ignore', 'pipe'],
-    });
-    sim.stderr?.on('data', (b) => (errors += b));
-    await wait(async () => {
-      const state = await api('/api/devices/sim-1/state');
-      return state.online && state.state?.simulated;
-    });
-    const command = await api('/api/devices/sim-1/commands', {
-      request_id: 'startup-page',
-      payload: { op: 'builtin', name: 'welcome' },
-    });
-    await wait(async () => {
-      const state = await api('/api/commands/' + command.id);
-      return state.status === 'completed' && state.detail.includes('simulated');
-    });
-    const run = await api('/api/devices/sim-1/messages', {
-      request_id: 'startup-message',
-      text: 'test',
-    });
-    await wait(async () => {
-      const state = await api('/api/runs/' + run.id);
-      return state.status === 'completed' && state.result.includes('MOCK - no model called');
-    });
-    assert.doesNotMatch(errors, /uncaught|TypeError|Error:/);
+    assert.equal((await once(stop, 'exit'))[0], 0);
+    assert.equal((await exit)[0], 0);
   } finally {
-    await stop(sim);
-    await stop(hub);
-    rmSync(dir, { recursive: true, force: true });
+    child.kill('SIGTERM');
+    await exit;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('stdio auto-starts a user connector, keeps stdout protocol-only and preserves proxy access in its child', async () => {
+  const { createServer } = await import('node:http');
+  const { ConfigStore } = await import('../src/connect/config.js');
+  const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+  const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+  let requests = 0;
+  const proxy = createServer((req, res) => {
+    assert.equal(req.url, 'http://wishos.fixture/asset');
+    requests++;
+    res.end('proxy fixture');
+  });
+  proxy.on('connect', (req, socket) => {
+    assert.equal(req.url, 'wishos.fixture:80');
+    socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+    socket.once('data', (data) => {
+      assert.match(data.toString(), /^GET \/asset HTTP\/1\.1/);
+      requests++;
+      socket.end('HTTP/1.1 200 OK\r\nContent-Length: 13\r\nConnection: close\r\n\r\nproxy fixture');
+    });
+  });
+  await new Promise<void>((r) => proxy.listen(0, '127.0.0.1', r));
+  const root = await mkdtemp(join(tmpdir(), 'wishos-stdio-')),
+    entry = fileURLToPath(new URL('../dist/connect/cli.js', import.meta.url)),
+    settings = new ConfigStore(root),
+    config = await settings.load();
+  await settings.save({ ...config, host: '127.0.0.1', port: 0, mdns: false });
+  const proxyUrl = 'http://127.0.0.1:' + (proxy.address() as any).port,
+    env = {
+      ...process.env,
+      HTTP_PROXY: proxyUrl,
+      HTTPS_PROXY: proxyUrl,
+      http_proxy: proxyUrl,
+      https_proxy: proxyUrl,
+      NO_PROXY: '127.0.0.1,localhost,::1',
+      no_proxy: '127.0.0.1,localhost,::1',
+    };
+  delete env.NODE_USE_ENV_PROXY;
+  const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: ['--use-env-proxy', entry, '--stdio', '--data-dir', root],
+      env,
+      stderr: 'pipe',
+    }),
+    client = new Client({ name: 'stdio-regression', version: '1' });
+  let errors = '';
+  transport.stderr?.on('data', (b) => (errors += b));
+  try {
+    await client.connect(transport);
+    assert((await client.listTools()).tools.some((t) => t.name === 'invoke_resource'));
+    const staged: any = await client.callTool({
+      name: 'stage_resource',
+      arguments: { url: 'http://wishos.fixture/asset', limit_bytes: 64 },
+    });
+    const job = JSON.parse(staged.content[0].text);
+    let done: any;
+    for (let i = 0; i < 100; i++) {
+      const reply: any = await client.callTool({
+        name: 'read_resource_job',
+        arguments: { id: job.id },
+      });
+      done = JSON.parse(reply.content[0].text);
+      if (done.state !== 'running') break;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assert.equal(done.state, 'completed', errors + JSON.stringify(done));
+    assert.equal(done.result.size, 13);
+    assert.equal(requests, 1);
+  } finally {
+    await client.close();
+    execFileSync(process.execPath, [entry, 'stop', '--data-dir', root], { env, stdio: 'pipe' });
+    await new Promise<void>((r) => proxy.close(() => r()));
+    await rm(root, { recursive: true, force: true });
   }
 });

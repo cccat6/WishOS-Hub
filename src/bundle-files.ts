@@ -31,7 +31,7 @@ export function canonicalRelative(path: unknown): path is string {
     path !== '.' &&
     !path.startsWith('/') &&
     !path.includes('\\') &&
-    !/[\x00-\x1f\x7f]/.test(path) &&
+    !/[\x00-\x1f\x7f?#]/.test(path) &&
     posix.normalize(path) === path &&
     !path.split('/').includes('..')
   );
@@ -41,10 +41,13 @@ export function resolveReference(file: string, reference: string) {
     typeof reference !== 'string' ||
     !reference ||
     reference.includes('\\') ||
-    /[\x00-\x1f\x7f]/.test(reference)
+    /[\x00-\x1f\x7f?#]/.test(reference)
   )
     throw Error('invalid_resource_reference');
-  if (reference.startsWith('/')) return reference;
+  if (reference.startsWith('/')) {
+    if (posix.normalize(reference) !== reference) throw Error('invalid_resource_reference');
+    return reference;
+  }
   const result = posix.normalize(posix.join(posix.dirname(file), reference));
   if (!canonicalRelative(result)) throw Error('resource_reference_escapes_revision');
   return result;

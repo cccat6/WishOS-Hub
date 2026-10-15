@@ -1,7 +1,5 @@
-import { createHash } from 'node:crypto';
 import { ResourceJobs } from '../resource-jobs.js';
 import { HostJobStore } from './job-store.js';
-import { canonicalValue } from '../control-receipts.js';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { timingSafeEqual, randomUUID } from 'node:crypto';
 import { access, writeFile, readFile, mkdir, unlink } from 'node:fs/promises';
@@ -9,12 +7,12 @@ import { constants } from 'node:fs';
 import { join, delimiter, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { WebSocketServer } from 'ws';
-import { ControlGuard, type ControlInput, type ControlReply } from '../control-receipts.js';
+import { ControlGuard, type ControlInput } from '../control-receipts.js';
 import { HostControlStore } from './control-store.js';
 import { Store } from '../store.js';
 import { Hub, type DeviceConfig } from '../hub.js';
 import { OsRpcSocket } from '../os-rpc-socket.js';
-import { NotesMcpHttp } from '../mcp-http.js';
+import { McpHttp } from '../mcp-http.js';
 import { hubApi } from '../hub-api.js';
 import { boundedJson } from '../adapters/runner-http.js';
 import {
@@ -115,11 +113,10 @@ export class ConnectorServer {
     });
   });
   private ws = new WebSocketServer({ noServer: true, maxPayload: 1024, perMessageDeflate: false });
-  private mcp = new NotesMcpHttp();
+  private mcp = new McpHttp();
   private discovery = new ConnectorDiscovery();
   private relay?: ConnectorRelay;
   private config!: ConnectorConfig;
-  private applied?: ConnectorConfig;
   private applying = false;
   private changing = false;
   private admissions = 0;
@@ -238,7 +235,7 @@ export class ConnectorServer {
   private async apply(next: ConnectorConfig, persist = true) {
     if (
       this.applying ||
-      this.jobs?.list().some((j) => j.state === 'running') ||
+      Boolean(this.jobs?.activeCount) ||
       this.hub?.hasActiveWork() ||
       [...this.routes.values()].some((r) => r.busy)
     )
@@ -273,7 +270,6 @@ export class ConnectorServer {
       const devices: DeviceConfig[] = next.devices.map((d) => ({
         id: d.id,
         token: d.token,
-        protocol: 'wishos',
         runtimeId: d.runtimeId,
         sessionId: d.sessionId,
         adapter: d.runtimeId ? adapters.get(d.runtimeId)! : new UnboundRuntime(),
@@ -290,7 +286,6 @@ export class ConnectorServer {
           ttlMs: next.resources.ttlMs,
         },
         speech: resolveSpeech(next.speech, this.secrets).applied,
-        speechConfigurationOwner: 'connector',
       });
       const address = (await candidate.listen(0, '127.0.0.1')) as { port: number };
       if (persist) await this.settings.save(next);
@@ -312,7 +307,6 @@ export class ConnectorServer {
         });
       }
       this.startRelay();
-      this.applied = next;
     } catch (error) {
       await candidate?.close();
       throw error;
@@ -412,7 +406,7 @@ export class ConnectorServer {
         this.stop.signal,
       )(path, payload);
       const data = JSON.parse(result.content[0]!.text);
-      const annotate = ({ state_history: _history, recent_events: _events, ...value }: any) => ({
+      const annotate = (value: any) => ({
         ...value,
         route: this.routes.get(value.device_id)?.status(),
       });
@@ -500,7 +494,6 @@ export class ConnectorServer {
         probe_interval_ms: 60000,
         idle_ms: 250,
       },
-      legacy_link: { enabled: true, ...lan, id: undefined },
       proxy_note:
         'Preserve explicit proxy bypass rules; add .local or this LAN hostname when using a proxy.',
     };
@@ -660,7 +653,7 @@ export class ConnectorServer {
         if (
           this.changing ||
           this.applying ||
-          this.jobs?.list().some((j) => j.state === 'running') ||
+          Boolean(this.jobs?.activeCount) ||
           this.hub?.hasActiveWork() ||
           [...this.routes.values()].some((r) => r.busy) ||
           this.admissions

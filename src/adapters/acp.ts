@@ -65,7 +65,7 @@ export class AcpAdapter implements HarnessAdapter {
     return (this.initialized ??= this.rpc.request('initialize', {
       protocolVersion: 1,
       clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
-      clientInfo: { name: 'wishos-hub', version: '0.4.0' },
+      clientInfo: { name: 'wishos-hub', version: '0.5.0' },
     }));
   }
   async open(nativeId?: string) {

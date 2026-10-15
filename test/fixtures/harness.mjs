@@ -13,24 +13,6 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   }
   if (kind === 'codex') {
     if (m.method === 'config/mcpServer/reload') return reply({});
-    if (m.method === 'mcpServer/tool/call') {
-      if (p.server !== 'notes_desktop' || p.tool !== 'get_usage_limits')
-        throw Error('unexpected desktop tool');
-      return reply({
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              rateLimits: {
-                limitId: 'codex',
-                primary: { usedPercent: 30, windowDurationMins: 10080 },
-                credits: { hasCredits: true, unlimited: false, balance: '555.5' },
-              },
-            }),
-          },
-        ],
-      });
-    }
     if (m.method === 'account/rateLimits/read')
       return reply({
         rateLimits: {
@@ -156,32 +138,5 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
         params: { threadId: 'thread-1', turn: { id: 'turn-' + count, status: 'completed' } },
       });
     }
-  } else if (m.method === 'session/prompt') {
-    if (!Array.isArray(p.contentBlocks) || !p.sessionId) throw Error('invalid SDK prompt shape');
-    const sessionId = p.sessionId,
-      messageId = 'message-' + ++count,
-      notify = (method, data) => output({ method, params: { sessionId, ...data } });
-    notify('session.status', { status: 'idle' }); // Must not settle the new request.
-    if (p.contentBlocks[0].text === 'never-admit') {
-      reply({ messageId });
-      return;
-    }
-    setTimeout(() => {
-      notify('session.event', {
-        event: { type: 'agent/inbox/spliced', data: { inserted: [{ id: messageId }] } },
-      });
-      notify('session.event', {
-        event: {
-          type: 'assistant/message',
-          data: { message: { content: [{ type: 'text', text: 'DeepSeek final' }] } },
-        },
-      });
-      if (p.contentBlocks[0].text === 'blocked')
-        notify('session.event', {
-          event: { type: 'turn/end', data: { reason: { kind: 'blocked' } } },
-        });
-      notify('session.status', { status: 'idle' });
-      reply({ messageId }); // Events may precede the RPC response.
-    }, 20);
   }
 });

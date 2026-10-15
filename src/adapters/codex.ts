@@ -31,7 +31,7 @@ export class CodexAdapter implements HarnessAdapter {
   }
   private async initialize() {
     this.initialized ??= this.rpc
-      .request('initialize', { clientInfo: { name: 'agentic_notes', version: '0.3.0' } })
+      .request('initialize', { clientInfo: { name: 'wishos-hub', version: '0.5.0' } })
       .then(() => {
         this.rpc.write({ method: 'initialized', params: {} });
       });
@@ -85,28 +85,6 @@ export class CodexAdapter implements HarnessAdapter {
   }
   async readUsage(session?: string) {
     await this.initialize();
-    const desktop = (this.threadOptions.config as any)?.mcp_servers?.notes_desktop;
-    if (session && desktop && desktop.enabled !== false) {
-      if (!this.active.has(session)) await this.open(session);
-      const result = await this.rpc.request(
-        'mcpServer/tool/call',
-        {
-          threadId: session,
-          server: 'notes_desktop',
-          tool: 'get_usage_limits',
-          arguments: {},
-          _meta: {
-            'openai/threadId': session,
-            'openai/turnId': this.active.get(session) ?? 'notes-usage-read',
-          },
-        },
-        15000,
-      );
-      if (result.isError) throw Error('Desktop usage tool returned an error');
-      const text = result.content?.find((v: any) => v.type === 'text')?.text;
-      if (typeof text !== 'string') throw Error('Desktop usage tool returned no usage data');
-      return { ...codexUsage(JSON.parse(text)), source: 'desktop/get_usage_limits' };
-    }
     return codexUsage(
       await this.rpc.request('account/rateLimits/read', { excludeResetCreditDetails: true }, 15000),
     );
@@ -201,11 +179,11 @@ export class CodexAdapter implements HarnessAdapter {
           return;
         if (m.method === 'turn/started' && p.turn?.id) this.active.set(session, p.turn.id);
         if (m.method === 'item/agentMessage/delta') {
-          delta = (delta + (p.delta ?? '')).slice(-64000);
+          delta += p.delta ?? '';
           emit({ type: 'text', text: p.delta ?? '' });
         }
         if (m.method === 'item/completed' && p.item?.type === 'agentMessage')
-          final = String(p.item.text ?? final).slice(0, 64000);
+          final = String(p.item.text ?? final);
         if (m.method === 'turn/completed')
           finish(
             p.turn?.status === 'completed'

@@ -42,7 +42,7 @@ function packet(n: number) {
     adpcm_b64: b.toString('base64'),
   };
 }
-test('passive WishOS: consecutive compressed recordings reach one Harness session as an ordered steer; MCP uses resource ABI', async () => {
+test('HTTP RPC: consecutive compressed recordings reach one Harness session as an ordered steer; MCP uses resource ABI', async () => {
   const pending = [1, 2].map((id) => ({
     id,
     request_id: 'boot:' + id,
@@ -129,7 +129,6 @@ test('passive WishOS: consecutive compressed recordings reach one Harness sessio
           token: '',
           adapter,
           deviceUrl: `http://127.0.0.1:${address.port}`,
-          protocol: 'wishos',
         },
       ],
       asr: { transcribe: async () => `voice ${++asrs}` },
@@ -172,12 +171,12 @@ test('passive WishOS: consecutive compressed recordings reach one Harness sessio
     await new Promise<void>((r) => device.close(() => r()));
   }
 });
-test('active WishOS uses the same RPC envelope through fragmented WebSocket frames', async () => {
+test('WebSocket RPC uses the same RPC envelope through fragmented WebSocket frames', async () => {
   const store = new Store(':memory:'),
     hub = new Hub({
       store,
       adminToken: '',
-      devices: [{ id: 'active', token: '', adapter: new MockAdapter(), protocol: 'wishos' }],
+      devices: [{ id: 'active', token: '', adapter: new MockAdapter() }],
     });
   const h = (await hub.listen(0, '127.0.0.1')) as any,
     base = `http://127.0.0.1:${h.port}`,

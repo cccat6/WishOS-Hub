@@ -117,3 +117,33 @@ test('connector rejects raw model keys and inconsistent bindings before applying
   );
   assert.equal(ConnectorConfig.parse(base).runtimes.length, 0);
 });
+
+test('ACP SSE parses CRLF and UTF-8 split at every network byte boundary', async () => {
+  const { SseRpc } = await import('../src/adapters/sse-rpc.js');
+  const encoder = new TextEncoder();
+  let stream!: ReadableStreamDefaultController<Uint8Array>;
+  const rpc = new SseRpc('https://fixture/acp', 'fixture', async (_url, init) => {
+    if (init?.method === 'POST') {
+      const request = JSON.parse(String(init.body));
+      const bytes = encoder.encode(
+        'data: ' + JSON.stringify({ id: request.id, result: { text: '中文' } }) + '\r\n\r\n',
+      );
+      for (const byte of bytes) stream.enqueue(Uint8Array.of(byte));
+      return new Response(null, { status: 202 });
+    }
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          stream = controller;
+          init!.signal!.addEventListener('abort', () => controller.close(), { once: true });
+        },
+      }),
+      { headers: { 'Acp-Connection-Id': 'connection' } },
+    );
+  });
+  try {
+    assert.deepEqual(await rpc.request('session/prompt', {}, 500), { text: '中文' });
+  } finally {
+    await rpc.close();
+  }
+});

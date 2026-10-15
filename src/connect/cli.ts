@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
 import { readFile, open, mkdir } from 'node:fs/promises';
-import { join, resolve, dirname } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ConfigStore, ConnectorConfig, defaultDataRoot } from './config.js';
 import { ConnectorServer } from './server.js';
@@ -47,11 +47,15 @@ async function startBackground(root: string) {
   if (existing) return existing;
   await mkdir(root, { recursive: true, mode: 0o700 });
   const log = await open(join(root, 'connector.log'), 'a', 0o600);
-  const child = spawn(process.execPath, [entry, 'serve', '--data-dir', root, '--no-browser'], {
-    stdio: ['ignore', log.fd, log.fd],
-    detached: true,
-    shell: false,
-  });
+  const child = spawn(
+    process.execPath,
+    ['--use-env-proxy', entry, 'serve', '--data-dir', root, '--no-browser'],
+    {
+      stdio: ['ignore', log.fd, log.fd],
+      detached: true,
+      shell: false,
+    },
+  );
   child.unref();
   await log.close();
   const end = Date.now() + 30000;

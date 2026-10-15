@@ -38,7 +38,7 @@ test('quota windows use consumed percentages, prefer per-limit data and keep cre
   assert.equal(unknown.limits?.[0]?.primary?.remaining_percent, null);
   assert.equal(codexUsage({}).available, false);
 });
-test('native Codex usage works through Notes HTTP MCP while unsupported adapters return explicit unavailable', async () => {
+test('native Codex usage works through WishOS HTTP MCP while unsupported adapters return explicit unavailable', async () => {
   const fixture = fileURLToPath(new URL('./fixtures/harness.mjs', import.meta.url));
   const adapter = new CodexAdapter(
     new RpcProcess(process.execPath, [fixture, 'codex'], process.cwd()),
@@ -47,7 +47,6 @@ test('native Codex usage works through Notes HTTP MCP while unsupported adapters
   const hub = new Hub({
     store,
     adminToken: '',
-    allowPowerCommands: false,
     devices: [
       { id: 'board', token: '', adapter },
       { id: 'unsupported', token: '', adapter: new MockAdapter() },
@@ -57,12 +56,12 @@ test('native Codex usage works through Notes HTTP MCP while unsupported adapters
   try {
     const address = (await hub.listen(0, '127.0.0.1')) as any;
     await client.connect(
-      new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp/notes`)),
+      new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`)),
     );
     const tools = await client.listTools();
-    assert.ok(tools.tools.some((t) => t.name === 'get_harness_usage'));
+    assert.ok(tools.tools.some((t) => t.name === 'harness_usage'));
     const result: any = await client.callTool({
-      name: 'get_harness_usage',
+      name: 'harness_usage',
       arguments: { device_id: 'board' },
     });
     const data = JSON.parse(result.content[0].text);
@@ -70,33 +69,15 @@ test('native Codex usage works through Notes HTTP MCP while unsupported adapters
     assert.equal(data.limits[0].primary.remaining_percent, 75);
     assert.equal(data.limits[0].credits.balance, '123.456');
     const unavailable: any = await client.callTool({
-      name: 'get_harness_usage',
+      name: 'harness_usage',
       arguments: { device_id: 'unsupported' },
     });
     assert.equal(JSON.parse(unavailable.content[0].text).available, false);
-    assert.equal((store.db.prepare('SELECT count(*) AS n FROM commands').get() as any).n, 0);
     assert.equal(await adapter.open(), 'thread-1');
     assert.equal(await adapter.send('thread-1', 'hello', () => {}), 'Codex final');
   } finally {
     await client.close();
     await hub.close();
     store.close();
-  }
-});
-test('connected desktop mode calls its existing usage tool instead of the account fallback', async () => {
-  const fixture = fileURLToPath(new URL('./fixtures/harness.mjs', import.meta.url));
-  const a = new CodexAdapter(
-    new RpcProcess(process.execPath, [fixture, 'codex'], process.cwd()),
-    1000,
-    { config: { mcp_servers: { notes_desktop: { enabled: true } } } },
-  );
-  try {
-    const session = await a.open();
-    const result = await a.readUsage(session);
-    assert.equal(result.source, 'desktop/get_usage_limits');
-    assert.equal(result.limits?.[0]?.primary?.remaining_percent, 70);
-    assert.equal(result.limits?.[0]?.credits?.balance, '555.5');
-  } finally {
-    await a.close();
   }
 });

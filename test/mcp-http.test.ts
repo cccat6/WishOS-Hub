@@ -6,16 +6,15 @@ import { Hub } from '../src/hub.js';
 import { Store } from '../src/store.js';
 import { MockAdapter } from '../src/adapters/mock.js';
 const text = (reply: any) => JSON.parse(reply.content[0].text);
-test('HTTP MCP: discovery, tools, resource, offline queue, idempotency and isolated clients', async () => {
+test('HTTP MCP: tools, guidance, offline errors and isolated clients', async () => {
   const store = new Store(':memory:');
   const hub = new Hub({
     store,
     adminToken: '',
     devices: [{ id: 'board', token: '', adapter: new MockAdapter() }],
-    allowPowerCommands: false,
   });
   const address = (await hub.listen(0, '127.0.0.1')) as any;
-  const url = `http://127.0.0.1:${address.port}/mcp/notes`;
+  const url = `http://127.0.0.1:${address.port}/mcp`;
   const clients = [
     new Client({ name: 'one', version: '1' }),
     new Client({ name: 'two', version: '1' }),
@@ -25,38 +24,30 @@ test('HTTP MCP: discovery, tools, resource, offline queue, idempotency and isola
       clients.map((client) => client.connect(new StreamableHTTPClientTransport(new URL(url)))),
     );
     const list = await clients[0]!.listTools();
-    assert.ok(list.tools.some((t) => t.name === 'present_text'));
-    assert.ok(list.tools.some((t) => t.name === 'get_command_status'));
+    assert.ok(list.tools.some((t) => t.name === 'invoke_resource'));
+    assert.ok(!list.tools.some((t) => t.name === 'present_text'));
     assert.match(
-      (await clients[0]!.readResource({ uri: 'notes://display-guide' })).contents[0]!
+      (await clients[0]!.readResource({ uri: 'wishos://guidance/components' })).contents[0]!
         .text as string,
-      /not proof/,
+      /wishos-components/,
     );
-    const state = text(await clients[0]!.callTool({ name: 'list_devices', arguments: {} }));
-    assert.equal(state[0].online, false);
-    const arguments_ = {
-      device_id: 'board',
-      request_id: 'same',
-      scene: { format: 'scene-v1', background: 1, commands: [] },
-    };
-    const a = text(await clients[0]!.callTool({ name: 'present', arguments: arguments_ }));
-    const b = text(await clients[1]!.callTool({ name: 'present', arguments: arguments_ }));
-    assert.equal(a.id, b.id);
-    assert.equal(a.status, 'queued');
-    assert.equal(
-      text(
-        await clients[1]!.callTool({ name: 'get_command_status', arguments: { command_id: a.id } }),
-      ).status,
-      'queued',
-    );
-    const denied = await clients[0]!.callTool({
-      name: 'request_shutdown',
-      arguments: { device_id: 'board' },
-    });
-    assert.equal(denied.isError, true);
+    for (const client of clients) {
+      assert.equal(
+        text(await client.callTool({ name: 'list_devices', arguments: {} }))[0].online,
+        false,
+      );
+      const unavailable = await client.callTool({
+        name: 'discover_resources',
+        arguments: { device_id: 'board' },
+      });
+      assert.equal(unavailable.isError, true);
+    }
     const malformed = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+      },
       body: '{',
     });
     assert.equal(malformed.status, 400);
@@ -76,7 +67,7 @@ test('HTTP MCP uses optional Hub token, rejects wrong token and unsupported brow
     devices: [{ id: 'board', token: 'device-fixture', adapter: new MockAdapter() }],
   });
   const address = (await hub.listen(0, '127.0.0.1')) as any,
-    url = `http://127.0.0.1:${address.port}/mcp/notes`;
+    url = `http://127.0.0.1:${address.port}/mcp`;
   const client = new Client({ name: 'token-client', version: '1' });
   try {
     assert.equal((await fetch(url, { method: 'POST', body: '{}' })).status, 401);

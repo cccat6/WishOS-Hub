@@ -1,29 +1,24 @@
 ---
 name: wishos-applications
-description: Author replaceable WishOS Lua/UI applications using discovered system interfaces. Use for pages, styles, navigation, input behavior, callbacks and application installation or replacement.
+description: 制作可实时替换的 WishOS Lua/UI 应用，定义页面、样式、导航、按钮行为和回调。通过公开系统能力运行，不修改固件内核。
 ---
 
-Read system and selected driver guidance first. UI descriptions are rendered by
-the system; the package supplies content and behavior. Use the selected hardware
-package's default suite as a reference, not a privileged execution layer.
+先读取系统和所选驱动指南、当前设备 schema 与默认初始包来源。
+UI 描述交给系统渲染，应用提供内容和行为；出厂套装也是普通运行时应用。
+用户可在允许的卷安装多个应用及替代 Launcher，默认 Launcher 也是普通目录包；版本切换与文件可写性由系统文件/应用服务管理。
 
-Use Lua source matching the advertised runtime. Load modules through its declared
-module facility and resolve paths through the runtime. Perform capability actions
-in lifecycle/event callbacks rather than executing them during module loading.
-Compilation during preflight does not execute on_start or prove program semantics.
+源码匹配声明的 Lua 版本，模块和路径通过运行时接口解析。
+能力调用在生命周期/事件回调中执行；预检编译不执行 on_start，不能证明任意程序语义。
+在 descriptor 声明需求和预算，并处理原生准入/操作失败。
 
-Declare resource requirements in the application descriptor and handle native
-admission/operation failures. Input meanings, debounce/hold/multi-click/chord
-policies, rotation behavior, recording feedback and display profile choices are
-runtime application data/code. They are not kernel page exceptions.
+短长按、多击、组合按键、旋转、录音反馈与显示配置选择属于可修改的应用行为。
+不把应用专属页面或流程写入内核。用系统事件和回调协调并发；刷新中不能打断显示驱动。
+应用须有简明的输入说明、首次引导、帮助、反馈及返回方式，保留系统独立 home/voice 入口。
 
-Make controls discoverable: concise first-use guidance, help, useful task feedback
-and a visible way home. Keep the system's independently reachable home/voice entry.
-An application may reference multiple UI/resources and share system libraries;
-static references must resolve, while dynamic references need normal runtime error
-handling and declared capabilities.
+确定性工作本地执行。通过系统 AI 服务请求推理或上游处理，不自行适配 Harness 协议。
+轻量 HTTP/API 可使用系统网络服务；重资源交给上游提炼、渲染或索引后单独传输。
+可只交付 UI 资源，无需为一次显示强行安装完整应用。
 
-For updates, read the package guide. Replace complete files; do not construct
-line-number patches. Build a complete immutable revision, preflight it before
-transfer, and retain the old package. Activation is explicit and separate from
-validated catalog installation. Never overwrite files used by a running package.
+更新按 wishos-packages 指南替换完整文件，构造不可变完整 revision 并先预检。
+安装与激活分开；不覆盖运行中版本、系统资源或旧应用的用户数据。
+动态路径无法静态证明时使用正常运行时错误处理，不能声称预检已验证一切。

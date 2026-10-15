@@ -1,5 +1,5 @@
 import { bootRpc, readDeviceFile } from './device-files.js';
-import { registerGuidance, guideToolReply, guidanceIndexUri } from './guidance.js';
+import { registerGuidance, guideToolReply } from './guidance.js';
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod-modern';
 import type { HubApi } from './api-types.js';
@@ -17,7 +17,7 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
         '2024-11-05',
       ],
       instructions:
-        'Before authoring or deploying, read wishos://guidance/components or call get_guidance; skills are supplied by MCP resources and tool fallback, not assumed installed on the client. Discover the selected device and resource capabilities first. Use /sys/apps for installed package references and lifecycle, and inspect the selected default package source as a hardware-specific reference. The launcher is an ordinary replaceable application. Preserve the independent /sys/navigation home/voice entry; explain controls, first-use guidance, help and task feedback when creating or changing an application. Do not introduce active/passive user work modes. Hardware drivers are compiled; UI, pages, input meanings and application behavior are ordinary runtime packages that can be replaced without firmware changes. UI layout, font/image rendering and presentation are system services; applications provide descriptions and behavior. Applications use /services/ai for managed AI requests; provider and Harness protocols belong to the user-owned connector. New results are ordered application/system actions, which may alternate. Discover the result/2 schema, receiver identity and completion contract before generating a sequence. The system coordinates application replacement after the appropriate notifications. Stage large files/code/images on the Hub with stage_resource; do not send arbitrary source download URLs to the device. Inspect /sys/transfers storage policy, physical partitions, quotas and runtime parser budgets. Pre-extract large JSON/XML and index books upstream. Use a presentation effect for UI-only output. Inspect /sys/ui capabilities and a device-provided UI example before generating its document format. Logs and telemetry are separate system services; never include prompts, credentials, audio or arbitrary log text in telemetry. Use advertised resource calls and file paths, never GPIO/register access. Keep deterministic work local; use a remote route only for an explicit application action. An accepted request is not physical completion: inspect its completion/event receipt. A timed-out mutation must be reconciled before retry. Display drivers declare their own colors, geometry and completion models; never infer them from the MCU or a previous device. Recordings are compressed blocks; durable upload, speech recognition, Harness admission and displayed output are separate stages. Use the existing Harness session tools for the user task, then explicitly present the result through the device resources.',
+        '先读取 wishos://guidance/components 或 get_guidance，按需读 system、drivers、applications、packages 指南和目标组件。发现实时 schema、boot、配置与预算，不从 MCU 推断外设。系统负责执行、渲染、呈现和资源协调；页面、输入含义、导航和调用顺序属于可替换运行时应用，Launcher 与用户应用同层，保留系统独立 home/voice 和声明的恢复入口。应用通过系统 AI 服务调用上游；会话和模型凭据留在用户 Harness。大资源单独 stage，解析/索引/复杂绘图在上游处理。应用安装按声明的 install_providers，普通下载按 transfers 策略和显式配额。托管回复只返回有序 application/system actions，不预先执行；设备拥有顺序、回调、原生完成屏障和清理。变更保留 request_id 与 expected_boot_id，结果不明先查回执，不重放。发现显示配置档及完成模型，不能中断 BUSY。录音为压缩块，无 SD 不隐式写 Flash。',
     },
   );
   registerGuidance(server);
@@ -25,7 +25,7 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
     'get_device_components',
     {
       description:
-        'Read the boot-scoped component index advertised by the selected device. Lists actual system, selected native drivers/topology and startup application references; does not mount storage or infer peripherals from its MCU.',
+        '读取当前 boot 的系统、所选驱动/拓扑与初始应用包来源，不挂载存储，不从 MCU 推断外设。',
       inputSchema: z.object({ device_id: z.string(), expected_boot_id: z.string() }),
     },
     async ({ device_id, expected_boot_id }) => {
@@ -86,36 +86,34 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
   };
   tool(
     'server_capabilities',
-    'Read this MCP deployment resource limits and available server preparation capabilities; device capabilities are discovered separately.',
+    '读取此 MCP 部署的资源限制及上游处理能力；设备能力单独发现。',
     {},
     async () => guideToolReply(await api('/api/service')),
   );
-  tool('list_devices', 'List connected devices and their transport state.', {}, () =>
-    api('/api/devices'),
-  );
+  tool('list_devices', '列出设备及其当前传输状态。', {}, () => api('/api/devices'));
   tool(
     'device_state',
-    'Read device, Harness and connection state.',
+    '读取设备、Harness 和连接状态。',
     { device_id: z.string() },
     ({ device_id }) => api(`/api/devices/${encodeURIComponent(device_id)}/state`),
   );
   tool(
     'discover_resources',
-    'Read one page of the live resource catalog. Continue while more is true; detailed method schemas are read separately.',
+    '读取一页实时资源目录；more 为 true 时继续分页，方法详情另行读取。',
     { device_id: z.string(), cursor: z.number().int().min(0).default(0) },
     ({ device_id, cursor }) =>
       invoke(device_id, '/sys/capabilities', 'list', { cursor, limit: 4, details: false }),
   );
   tool(
     'describe_resource',
-    'Read the selected resource capability and lifecycle metadata without starting it.',
+    '读取所选资源能力、配置和生命周期，不启动资源操作。',
     { device_id: z.string(), path: z.string() },
     async ({ device_id, path }) =>
       guideToolReply(await invoke(device_id, '/sys/capabilities', 'describe', { path })),
   );
   tool(
     'invoke_resource',
-    'Call an advertised resource. For mutations supply a fresh UUID request_id and expected_boot_id from discovery; reuse that identity only to retrieve/reconcile a receipt, never silently replay an uncertain write. Use request/operation completion for asynchronous methods. Large files use discovered chunk limits.',
+    '调用已声明资源。变更传唯一 request_id 和发现所得 expected_boot_id；保留身份查回执，不重放结果不明的写入。异步方法等待声明的 operation 完成，大文件按块传。',
     {
       device_id: z.string(),
       path: z.string().min(1),
@@ -132,13 +130,13 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
   );
   tool(
     'read_operation',
-    'Read the server receipt for a previous mutation without repeating it. Native acceptance is separate from physical completion; inspect the declared native completion resource too.',
+    '读取先前变更的服务器回执，不重复执行；原生受理与物理完成不同，还需检查原生完成资源。',
     { device_id: z.string(), boot_id: z.string(), request_id: z.string() },
     (input) => api('/api/os/receipts/read', input),
   );
   tool(
     'stage_resource',
-    'Fetch a large source on the server, or stage generated text. Generated binary files can instead be streamed by execution tools to POST /api/os/artifacts/upload with application/octet-stream and Hub authorization. Returns a job identity immediately; poll read_resource_job for its artifact ID for a managed result files array; never send source URLs to device downloads.',
+    '上游获取资源或暂存生成文本。生成二进制可通过已授权的 POST /api/os/artifacts/upload 流式上传，类型 application/octet-stream。返回 job；轮询完成取得 artifact_id，再交付或放入托管结果 files。原始大资源 URL 不交给设备下载。',
     {
       url: z.string().url().optional(),
       text: z.string().optional(),
@@ -149,20 +147,20 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
   );
   tool(
     'read_resource_job',
-    'Read preparation, transfer or package job results. Job completion is separate from application activation and physical output. Inspect result.state and receipts: a failed activation job can retain a committed install; reconcile an unknown outcome before retrying.',
+    '读取处理、传输或包任务结果。检查 result.state 和各阶段 receipts；激活失败仍可能已经安装。结果不明先核对，任务完成不等于物理输出完成。',
     { id: z.string() },
     (input) => api('/api/os/jobs/read', input),
   );
   tool(
     'cancel_resource_job',
-    'Request cancellation of server resource work. It does not roll back a committed device operation.',
+    '请求取消上游资源任务，不回滚已提交的设备操作。',
     { id: z.string() },
     (input) => api('/api/os/jobs/cancel', input),
   );
   if (options.imagePreparation)
     tool(
       'prepare_image',
-      'On the user host, crop/scale an existing artifact to discovered device geometry. Output PNG, RGB8 or palette indices; native panel packing belongs to its adapter. Palette is explicit and must come from discovery.',
+      '用户主机将已有 artifact 按目标几何裁切/缩放，输出 PNG、RGB8 或显式色表索引；屏幕字节编码归适配器，不推断六色或固定尺寸。',
       {
         artifact_id: z.string(),
         width: z.number().int().positive(),
@@ -177,7 +175,7 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
     );
   tool(
     'deliver_resources',
-    'Transfer staged resources in bounded chunks to discovered storage policy. This only delivers a verified bundle; call a resource or return a managed result to use it.',
+    '按目标存储策略分块交付已校验资源；仅完成传输，之后通过资源调用或托管结果使用。调用方负责消费者接管后的回执释放。',
     {
       device_id: z.string(),
       expected_boot_id: z.string(),
@@ -208,19 +206,19 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
   job(
     'preflight_bundle',
     'preflight',
-    'Compile/check the complete immutable staged file set before any device write. An optional boot-scoped target adds capability and declared-limit checks. This is static validation, not a heap reservation, runtime memory guarantee or activation. Lua is not executed.',
+    '设备写入前预检完整不可变文件集合；可选目标增加 boot、能力、安装卷和预算检查。只编译不执行 Lua，不预留内存或保证激活。',
     { ...target, files: z.array(packageFile).min(1) },
   );
   job(
     'prepare_package',
     'package_prepare',
-    'Build a sorted SHA-256 inventory and package header for complete runtime files, then run real preflight. Returns files for deploy_package; no device writes.',
+    '为完整运行时文件构建排序 SHA-256 inventory/header 并预检，返回 deploy_package 所需 files；不写设备。',
     { ...target, files: z.array(packageFile).min(1), manifest: z.string().default('app.json') },
   );
   job(
     'deploy_package',
     'package_deploy',
-    'Preflight the complete package, deliver it, await native validation and install with a matching ticket/catalog revision. Activation is optional and has separate completion. Installation can remain committed when activation fails; read install/activation receipts. Optional stop_current_before_transfer requires activate:true and stops the current runtime only after full preflight and boot/revision checks. Failure can leave it stopped; no implicit stop, rollback or retry. Poll read_resource_job and reconcile uncertain effects before retrying.',
+    '完整预检后交付、等待原生验证，以匹配票据/catalog revision 安装。激活可选，回执分开；激活失败可能已安装。stop_current_before_transfer 显式启用且须 activate:true，仅在完整检查后停止当前 VM；后续失败可能保持停止，不自动重启/回滚/重试。轮询 job。',
     {
       device_id: z.string(),
       expected_boot_id: z.string(),
@@ -235,7 +233,7 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
   job(
     'update_package',
     'package_update',
-    'Replace whole files/delete files in a new immutable revision of an installed package. Reads unchanged control sources for complete preflight; unchanged binary assets stay on device and require native local-copy digest verification. Never edit lines or silently merge a changed catalog base. User data stays outside application revisions. Validation does not reserve runtime memory; installation and optional activation have separate receipts. stop_current_before_transfer is explicit, defaults false and requires activate:true; it stops the runtime only after complete preflight and boot/revision checks, never as an automatic retry.',
+    '以完整替换文件/显式删除构造安装包的新不可变 revision。读取未变化控制源码做完整预检；大资源在设备复制并校验摘要。不做行补丁或静默合并新基线，用户数据不放 revision 内。安装/激活回执分开，停止当前 VM 仅限显式 stop_current_before_transfer 且 activate:true。',
     {
       device_id: z.string(),
       expected_boot_id: z.string(),
@@ -250,13 +248,13 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
   );
   tool(
     'harness_usage',
-    'Read usage from the device-bound Harness when its adapter supports it.',
+    '读取绑定 Harness 提供的真实用量；以适配器能力为准。',
     { device_id: z.string() },
     ({ device_id }) => api(`/api/devices/${encodeURIComponent(device_id)}/usage`),
   );
   tool(
     'harness_tools',
-    'Read the tools available to the bound Harness session.',
+    '读取绑定 Harness 会话可用工具。',
     { device_id: z.string() },
     ({ device_id }) => api(`/api/devices/${encodeURIComponent(device_id)}/tools`),
   );

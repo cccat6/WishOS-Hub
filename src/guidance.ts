@@ -5,7 +5,7 @@ import { guidance } from './generated/guidance.js';
 export const guidanceIndexUri = 'wishos://guidance/components';
 export const guidanceCatalog = {
   format: 'wishos-components/1',
-  scope: 'Hub-bundled portable guidance; selected device implementations are discovered separately',
+  scope: 'Hub 随包通用指南；具体设备实现另行发现',
   components: guidance.map(({ text, ...record }) => record),
   references: osReferences.map(({ text, ...record }) => record),
 };
@@ -14,7 +14,7 @@ export function guidanceLinks() {
     {
       type: 'resource_link' as const,
       uri: guidanceIndexUri,
-      name: 'WishOS component and skill index',
+      name: 'WishOS 组件与使用指南',
       mimeType: 'application/json',
     },
   ];
@@ -26,7 +26,7 @@ export function registerGuidance(server: McpServer) {
   server.registerResource(
     'wishos-components',
     guidanceIndexUri,
-    { title: 'WishOS components and skills', mimeType: 'application/json' },
+    { title: 'WishOS 组件与使用指南', mimeType: 'application/json' },
     (uri) => ({
       contents: [
         { uri: uri.href, mimeType: 'application/json', text: JSON.stringify(guidanceCatalog) },
@@ -40,8 +40,7 @@ export function registerGuidance(server: McpServer) {
       {
         title: 'WishOS ' + reference.id,
         mimeType: 'text/markdown',
-        description:
-          'Pinned authoritative OS runtime reference; consult live metadata for version-specific capabilities',
+        description: '固定版本 OS 参考；实际支持以当前设备元数据为准',
       },
       (uri) => ({ contents: [{ uri: uri.href, mimeType: 'text/markdown', text: reference.text }] }),
     );
@@ -52,15 +51,14 @@ export function registerGuidance(server: McpServer) {
       {
         title: guide.id,
         mimeType: 'text/markdown',
-        description: `${guide.layer} layer guidance; schema discovery remains authoritative`,
+        description: `${guide.layer} 层指南；实时 schema 为调用依据`,
       },
       (uri) => ({ contents: [{ uri: uri.href, mimeType: 'text/markdown', text: guide.text }] }),
     );
   server.registerTool(
     'get_guidance',
     {
-      description:
-        'Read WishOS component/skill index or a complete selected guide. Available as a tool for clients that do not expose MCP resource browsing.',
+      description: '读取 WishOS 组件索引或完整分层指南；不支持 MCP 资源浏览的客户端也可用此工具。',
       inputSchema: z.object({ component_id: z.string().default('index') }),
     },
     async ({ component_id }) => {
@@ -93,18 +91,17 @@ export function registerGuidance(server: McpServer) {
   server.registerPrompt(
     'wishos-authoring',
     {
-      description:
-        'Author or update a WishOS application after discovering system, driver and package contracts.',
+      description: '发现系统、驱动和包契约后制作或更新 WishOS 应用。',
       argsSchema: z.object({ device_id: z.string().optional(), task: z.string().optional() }),
     },
     ({ device_id, task }) => ({
-      description: 'WishOS runtime authoring',
+      description: 'WishOS 运行时应用制作',
       messages: [
         {
           role: 'user',
           content: {
             type: 'text',
-            text: `Use WishOS MCP for the requested task${device_id ? ' on device ' + JSON.stringify(device_id) : ''}. Read ${guidanceIndexUri} (or get_guidance), then the system, selected driver and application/package guides. Discover live schemas and budgets; use real preflight before device delivery. Replace whole files in immutable revisions. Native validation and admission remain authoritative; a successful parser is not proof of arbitrary program semantics. Task: ${task ?? 'Inspect the selected device and explain an appropriate runtime package plan.'}`,
+            text: `通过 WishOS MCP 完成任务${device_id ? '，目标设备 ' + JSON.stringify(device_id) : ''}。先读 ${guidanceIndexUri}（或 get_guidance），按需读系统、所选驱动、应用及包指南。发现当前 schema 和预算，交付前真实预检；整文件写入新不可变 revision。原生验证/准入仍是最终依据，编译不能证明任意程序语义。任务：${task ?? '查看设备并确定适当的运行时应用方案。'}`,
           },
         },
       ],

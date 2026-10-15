@@ -10,7 +10,7 @@ repository. Hub owns transport/session adapters, not the terminal execution API.
 Each ordered endpoint has unique `id`, `host`, `port`, `path`, `tls`,
 `verify_peer`, optional `ca_pem`, `headers`, `reconnect_ms`, and heartbeat settings.
 `attempt_timeout_ms:20000`, `retry_ms:5000`, `probe_interval_ms:60000`, `idle_ms:250`
-are generated profile defaults. Legacy firmware receives `legacy_link` instead.
+are generated profile defaults. The public connector emits the endpoint form.
 
 `_wishos._tcp` advertises the connector's stable `.local` host and port. Each paired
 device uses the same scoped grant for LAN and relay; identity is never its DHCP IP.
@@ -55,3 +55,16 @@ Device reboot, request retirement, Hub shutdown and server crash are distinct.
 Hub unknown outcomes block a new device-bound Harness turn until the local owner
 inspects the native session and acknowledges the outcome. Cancellation does not
 promise rollback or immediate native completion.
+
+## Application placement
+
+`/sys/apps describe.install_providers` positively declares allowed provider IDs
+(CSV), and `factory_launcher` identifies the configured initial reference. Hub
+preflight checks a package against the current ordered transfer target without
+mounting or writing storage. Explicit delivery may prepare storage, then rechecks
+the actual target before beginning package transfer. Native validation/install
+remains authoritative. This restriction does not apply to ordinary data delivery.
+No MCU family or Flash-size heuristic is used. Initial and user launchers have
+normal application lifecycles. The terminal owner is finalizing writable internal
+filesystem provisioning and recovery references; Hub does not presume `/system`
+is writable or define a privileged launcher layer.

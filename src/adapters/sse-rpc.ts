@@ -41,15 +41,16 @@ export class SseRpc extends EventEmitter {
           for (;;) {
             const r = await reader.read();
             if (r.done) break;
-            buffer += decoder.decode(r.value, { stream: true }).replace(/\r\n/g, '\n');
+            buffer += decoder.decode(r.value, { stream: true });
             if (buffer.length > 4 * 1024 * 1024) throw Error('acp_frame_limit');
             for (;;) {
-              const at = buffer.indexOf('\n\n');
-              if (at < 0) break;
+              const separator = /\r?\n\r?\n|\r\r/.exec(buffer);
+              if (!separator) break;
+              const at = separator.index;
               const event = buffer.slice(0, at);
-              buffer = buffer.slice(at + 2);
+              buffer = buffer.slice(at + separator[0].length);
               const data = event
-                .split('\n')
+                .split(/\r\n|\r|\n/)
                 .filter((x) => x.startsWith('data:'))
                 .map((x) => x.slice(5).trimStart())
                 .join('\n');

@@ -1,82 +1,56 @@
 ---
 name: wishos-packages
-description: Prepare and validate complete WishOS runtime package revisions and whole-file updates before device delivery. Use when creating, installing or changing application code and resources.
+description: 构造、预检、安装和整文件更新 WishOS 运行时应用包。用于完整 revision 与资源交付，不用于固件或原生驱动升级。
 ---
 
-A runtime revision uses the discovered `wishos-package/1` contract, not a firmware
-image. package.json names the application entry descriptor, files.jsonl inventory
-and its SHA-256. The sorted UTF-8 inventory contains canonical relative payload
-paths, decimal-string byte sizes, SHA-256 values and optional kind (json/lua/asset); it excludes itself and the
-package header. App source is text Lua. Do not include native drivers in a runtime
-package or infer bytecode/firmware upload support.
+读取目标组件和固定 OS 参考：`get_device_components`、`get_guidance`（packages）。
+包格式以目标声明为准。当前 wishos-package/1 的 package.json 指向 app descriptor、
+files.jsonl 及其 SHA-256。inventory 按 UTF-8 路径排序，记录规范相对路径、十进制字符串
+字节数、SHA-256 和可选 kind（json/lua/asset），排除 header 与 inventory 本身。
+应用是文本 Lua，不把原生驱动或固件塞进运行时包。
 
-Stage complete replacement files on the Hub. Use prepare_package for a new
-revision, preflight_bundle to inspect one, deploy_package for admission/optional
-activation and update_package for whole-file revisions; poll read_resource_job.
-The selected application descriptor and declared JSON/UI controls are parsed.
-Use kind:asset for large data JSON that the device only stores/streams. Lua sources
-and the program entry remain code; an asset label cannot bypass Lua validation.
-Keep books and recording histories outside application revision directories. Check the entire resulting revision: header, inventory,
-content hashes, manifests, references, actual Lua syntax using the selected native parser profile, selected capabilities
-and known budgets. Follow structured error diagnostics to fix the whole offending
-file. Validation does not prove arbitrary application semantics, reserve runtime heap
-or guarantee activation. A declared memory budget is the target's configured limit,
-with its advertised accounting semantics, rather than a claim that so much free
-heap exists or must be reserved before starting. Actual native allocation and
-activation remain authoritative.
+完整文件分别 stage，完成后用 prepare_package / preflight_bundle；deploy_package 安装
+并可显式激活，update_package 从指定 catalog/base revision 构造完整新版本。
+这些工具返回 job，轮询 read_resource_job。修改以整个文件为单位，不做行号补丁。
+未变化的大资源由设备按租约复制并校验摘要；上游读取未变化的控制源码做完整预检。
+书籍、录音和用户文档放在应用 revision 目录之外。
 
-A file-level update identifies its installed base/catalog revision and carries
-whole replacement files plus explicit deletions. Reconstruct and validate the
-complete result upstream. Transfer changed files, and use a discovered bounded
-local-copy operation for unchanged files. A changed base, device boot or capability
-snapshot invalidates earlier assumptions. Never silently merge into a newer base.
+预检实际编译 Lua 5.4 源码，验证 header/inventory/hash、静态引用、已知格式、能力和预算。
+大数据 JSON 标记 kind:asset 可按数据流校验；Lua/入口不能靠 asset 标签绕过编译。
+父相对路径可在包内部使用，不能逃出 revision。系统资源只引用规范的 /system 路径。
+UI 预检按所选 renderer 的词汇和限制；on_start 可注册字体，结构有效不代表字体已就绪。
+预检不执行 on_start、不证明任意程序语义、不预留 heap，也不保证之后一定能激活。
 
-Use native package validation after delivery. Install only with its successful,
-matching validation identity and expected catalog revision. Preserve the validation
-lease through catalog commit. A successful install consumes it; release it on failure or when no longer installing. Launch/foreground navigation
-is a separate explicit action. Keep previous/running revisions and release resources
-through normal lifecycle rules; deletion/retention remains explicit.
+先读 `/sys/apps describe.install_providers` 确认应用安装卷，再读 `/sys/transfers` 有序目标、
+`/fs mounts` 和配额。用户应用/替代 Launcher 优先按设备包的 SD 策略放置；只有设备明确
+允许且配置了内部 Flash 目标和配额才能回退，不按 MCU 型号或容量猜测。
+初始 Launcher 与用户应用同层，按系统声明的可写位置和 revision 更新；不假定 /system 可写。普通数据下载仍按下载策略。
 
-Ordinary media/file writes are not application admission. Do not bypass package
-validation with raw filesystem writes, runtime load calls or a managed-result action
-sequence. Use the schemas and tool instructions actually advertised by the device
-and Hub; do not invent a method based on this guide's description.
+传完后提交原生 validate，等待成功票据，再以匹配的 validation_id、manifest/package
+和 expected_revision 安装。持有验证租约直到 catalog 提交；成功安装消费票据，失败释放。
+激活是独立动作。安装成功、激活失败时仍须保留已提交 revision 和各阶段回执，不能说回滚了。
+旧 revision 与运行中文件由正常租约/保留规则保护。
 
-UI preflight checks the selected renderer format, external screen/image references,
-nodes/styles/layout and declared budgets. Symbolic/custom font aliases may be
-registered during on_start; schema validation is separate from current native
-render readiness. No preview/preflight establishes optical output or arbitrary
-runtime semantics. Read get_device_components for actual device composition and
-get_guidance for the pinned authoritative OS references, including packages.
+类型化部署在原生消费者取得租约后释放自己的传输回执。
+普通 deliver_resources 留给调用方显式接管/释放；托管结果由 OS 接管，勿加重复清理步骤。
+通过托管结果安装时返回以下连续动作及对应 files，不预先执行：
 
-Typed deployment releases only its own committed transfer receipt after native
-validation admission acquires the package lease. Generic resource delivery keeps
-that receipt for explicit consumer adoption; a managed OS result adopts it itself.
-Do not add or reorder managed actions to compensate for transport bookkeeping.
+```json
+{"format":"wishos-result/2","actions":[
+ {"type":"system","path":"/sys/apps","method":"validate","args":{"manifest":{"$asset":"app.json"},"package":{"$asset":"package.json"}}},
+ {"type":"system","path":"/sys/apps","method":"install","args":{"manifest":{"$asset":"app.json"},"package":{"$asset":"package.json"},"validation_id":{"$previous":"operation_id"},"expected_revision":{"$previous":"revision"}}},
+ {"type":"system","path":"/sys/apps","method":"launch","args":{"id":{"$previous":"application_id"}}}
+]}
+```
 
-When activate is false, successful deployment means installed, not running.
-When requested activation fails, a failed job may still contain a successful
-install receipt with the new revision/paths and a failed activation receipt.
-Keep those outcomes distinct, preserve the old foreground if the native service
-does so, and never invent an automatic rollback or repeat on_start.
+`$previous` 是上一步结果；不能插入额外步骤改变引用含义。应用通知可在其它位置显式安排，
+替换前需处理完成屏障时用 wait:processed，而非 queued。大动作计划使用单独 JSONL。
 
-For an explicitly chosen deployment interruption, deploy_package and update_package
-accept `stop_current_before_transfer:true` together with `activate:true` (the stop
-option defaults false). Hub first checks the entire resulting package, boot,
-catalog revision and required methods; only then does it call the advertised
-/sys/runtime stop, recording runtime_stop before transfer/preparation starts.
-This may release memory for native workers without changing device budgets. A
-later failure may leave the runtime stopped or the new catalog already installed;
-read all receipts. Hub never silently enables this option, retries with it, rolls
-back the catalog, or restarts old/new on_start. Without it the old VM is retained
-through normal native admission. The option does not rewrite returned managed
-application/system action sequences or their $previous references.
+默认保留当前 VM。只有显式 `stop_current_before_transfer:true` 且 activate:true，Hub 才在
+完整预检、boot/revision/方法确认后停止当前运行时。之后失败可能留下已停止的 VM 或已安装
+但未激活的新版本；检查回执，不隐式重启、降准入要求、自动回滚或改写托管动作。
 
-Transport loss during a declared read-only precheck may be reread within a bounded
-same-boot recovery window. A mutation is only eligible to wait/retry while the
-transport proves it was not dispatched. A sent mutation with a missing reply
-stays uncertain and is not replayed. A response with result.not_dispatched:true
-is a known failure of that requested call, even if an earlier precheck read lost
-its reply; it does not undo earlier stop/transfer/validation steps. Inspect saved
-receipts and current boot/catalog before a new explicit request. Failed package
-staging is retained for explicit cleanup; never delete an old running revision.
+只读预检可在同 boot 的有界窗口恢复；变更只有被证明尚未发出才可重试。
+响应 result.not_dispatched:true 是本次未发出的失败，不撤销之前阶段。
+已发送而结果不明的变更先核对回执、boot 与 catalog，不能重放。
+拒绝时保留旧包，失败候选由显式清理处理，不删除正在运行的版本。

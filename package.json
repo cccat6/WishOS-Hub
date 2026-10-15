@@ -7,16 +7,13 @@
     "node": ">=24.22"
   },
   "scripts": {
-    "build": "npm run build:guidance && tsc -p tsconfig.json",
+    "build": "node scripts/clean-build.mjs && npm run build:guidance && tsc -p tsconfig.json",
     "start": "node --use-env-proxy dist/connect/cli.js serve",
     "test": "npm run build && tsx --test --test-concurrency=1 test/*.test.ts",
-    "simulate": "tsx tools/simulate.ts",
     "mcp": "node --use-env-proxy dist/connect/cli.js --stdio",
     "format": "prettier --write src test tools *.json",
     "format:check": "prettier --check src test tools *.json",
     "launch": "node --use-env-proxy dist/connect/cli.js setup",
-    "os-bridge": "node dist/os-remote-runner.js",
-    "mcp:hardware": "node dist/hardware-mcp.js",
     "check:cloud": "tsc -p cloud/tsconfig.json",
     "cloud:bundle": "wrangler deploy --dry-run --config cloud/wrangler.jsonc --outdir build/cloud",
     "cloud:deploy": "wrangler deploy --config cloud/wrangler.jsonc",
@@ -24,9 +21,7 @@
     "build:guidance": "node scripts/build-guidance.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.32.1",
     "@modelcontextprotocol/server": "2.3.1",
-    "@resvg/resvg-js": "2.6.2",
     "bonjour-service": "1.4.4",
     "https-proxy-agent": "7.0.6",
     "luaparse": "0.3.1",
@@ -43,7 +38,8 @@
     "prettier": "3.6.2",
     "tsx": "4.23.15",
     "typescript": "5.9.3",
-    "wrangler": "4.151.0"
+    "wrangler": "4.151.0",
+    "@modelcontextprotocol/sdk": "1.32.1"
   },
   "license": "MIT",
   "description": "MCP, user-owned Harness connector and device relay for WishOS",

@@ -27,6 +27,25 @@ export class PreflightError extends Error {
     this.diagnostics = [{ code, ...diagnostic }];
   }
 }
+/** Mirrors the device's ordered transfer target selection without mounting or
+ * changing policy. Package placement is separate from ordinary data delivery. */
+export function checkApplicationStorage(
+  metadata: any,
+  policy: any,
+  providers: any[],
+  includePreparation: boolean,
+) {
+  if (typeof metadata.install_providers !== 'string') return;
+  const allowed = metadata.install_providers.split(',');
+  for (const target of policy.targets ?? []) {
+    const volume = providers.find((p) => p.id === target.provider);
+    if (!volume || (!volume.available && !(includePreparation && volume.prepare))) continue;
+    if (!allowed.includes(target.provider))
+      throw new PreflightError('application_storage_provider', { detail: target.provider });
+    return target.provider as string;
+  }
+  throw new PreflightError('application_storage_unavailable');
+}
 export type PreflightOptions = {
   compiler?: LuaCompilerFactory;
   rpc?: DeviceRpc;
@@ -196,7 +215,14 @@ async function checkResolved(
     if (!String(runtime.engine ?? runtime.validation?.parser ?? '').includes('5.4'))
       throw new PreflightError('runtime_language_mismatch');
   }
-  if (options.rpc && (headers.length || manifests.length)) apps = await describe('/sys/apps');
+  if (options.rpc && (headers.length || manifests.length)) {
+    apps = await describe('/sys/apps');
+    if (typeof apps.install_providers === 'string') {
+      const transfer = await read('/sys/transfers', 'read'),
+        volumes = await read('/fs', 'mounts');
+      checkApplicationStorage(apps, transfer.policy ?? {}, volumes.providers ?? [], true);
+    }
+  }
   if (options.rpc && ui.length) {
     uiCaps = { ...(await describe('/sys/ui')), ...(await read('/sys/ui', 'capabilities')) };
     if (
@@ -497,6 +523,12 @@ async function checkResolved(
         ? { runtime_memory_budget_semantics: runtime.memory_budget_semantics }
         : {}),
       package: apps.package_validation ?? null,
+      ...(typeof apps.install_providers === 'string'
+        ? {
+            application_install_providers: apps.install_providers,
+            factory_launcher: apps.factory_launcher,
+          }
+        : {}),
       ui_document_bytes: uiCaps.max_document_bytes ?? null,
     },
     scope:

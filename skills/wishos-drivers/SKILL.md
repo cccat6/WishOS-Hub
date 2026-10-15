@@ -1,33 +1,26 @@
 ---
 name: wishos-drivers
-description: Discover WishOS driver capabilities and implement native hardware adapters without mixing them with application behavior. Use when inspecting device features or adding a compiled driver/device configuration.
+description: 发现 WishOS 原生驱动能力，或为新硬件提供编译型适配。用于检查引脚拓扑、协议、初始化、配置和完成契约，不定义用户应用流程。
 ---
 
-Read the selected driver's own metadata and guide. A chip family does not define
-wiring, sensors, pins, color spaces, supply topology or user gestures. Keep MCU/SDK
-support, reusable peripheral drivers and a device's wiring/composition separate.
+读取所选驱动和设备包的元数据。MCU/SDK 支持、可复用外设驱动与某台设备的接线/组合
+是三件事；芯片型号不能推出屏幕、传感器、储存器或按钮含义。
 
-Native drivers declare transport/protocol, resource, configuration and lifecycle
-capabilities; implementation defaults and electrical constraints belong there.
-Runtime applications use system/resource calls and cannot directly own GPIO,
-registers, RTOS priorities or physical bus access. Native changes can require a
-new target build; application/UI changes use runtime loading.
+驱动声明传输/协议、资源、配置和生命周期能力。电气约束与实现默认值归驱动/设备包。
+运行时应用只用系统资源调用，不直接操作 GPIO、寄存器、原生优先级或物理总线。
+驱动变更可以重新编译，应用/UI 变更通过现有运行时加载。
 
-All bus accesses, including discovery/status/error recovery, use arbitration.
-Release the bus while a device works independently. Respect active device/file/
-stream leases before reset, power-off, reprobe or reconfiguration. Advertise only
-implemented capabilities and keep native init/teardown/scan work off the event loop.
+所有总线访问含状态/恢复均需仲裁；独立外设运行期间释放总线。
+复位、重探测、断电和重配遵守设备/文件/流租约。阻塞初始化、销毁和扫描交给原生 worker；
+回调及应用分发仍在系统事件循环。只正向声明已实现能力。
 
-Display implementations expose profiles, geometry, colors and completion behavior,
-with recommended use cases. Raw waveform experiments are not public application
-interfaces. Audio input, wake/keyword detection and speaker output are independent
-capabilities; do not infer support or backend placement from another device.
+显示驱动声明配置档、几何、可用颜色、速度和完成模型及建议使用范围。
+公开应用接口不暴露内部波形实验。麦克风输入、关键词检测与扬声器输出分别发现，
+不能因另一块设备有此能力就声称本设备也有。
 
-Storage presence/link checks are independent of partitions, format and write
-permission. Do not write media to discover it or silently round a fixed bus speed.
-Distinguish device link, volume availability, I/O outcome and durable completion.
+储存器存在/链路握手与分区、格式、读写权限独立。发现不能写卡、建索引或创建文件。
+固定总线速度不能静默取近似值。链路、卷可用、I/O 结果和持久完成分别报告。
 
-Wi-Fi saved profiles, policy, runtime intent and actual association are distinct;
-a manual request owns selection until it fails according to the configured policy.
-Wi-Fi/BLE and other supported radios retain their own settings and resource rules.
-Ecosystem accounts, dashboards and cloud business logic belong above native drivers.
+无线的记忆配置、自动策略、手动意图和实际连接分开；手动意图不会被后台排序覆盖。
+Wi-Fi/BLE 各自可配置，遵守共享无线资源规则。
+家庭生态账号、厂商云端与产品面板是上层应用/服务内容。

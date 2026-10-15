@@ -1,3 +1,4 @@
+import { pcmWav } from './voice.js';
 import { createHash } from 'node:crypto';
 import { HttpError } from './protocol.js';
 class AudioError extends HttpError {
@@ -351,21 +352,8 @@ export class OsAudioIngress {
       missing / samples > (config.max_loss_ratio ?? 0.05)
     )
       throw new AudioError('audio_loss_exceeded');
-    const header = Buffer.alloc(44);
-    header.write('RIFF');
-    header.writeUInt32LE(36 + pcm.length, 4);
-    header.write('WAVEfmt ', 8);
-    header.writeUInt32LE(16, 16);
-    header.writeUInt16LE(1, 20);
-    header.writeUInt16LE(1, 22);
-    header.writeUInt32LE(config.sample_rate, 24);
-    header.writeUInt32LE(config.sample_rate * 2, 28);
-    header.writeUInt16LE(2, 32);
-    header.writeUInt16LE(16, 34);
-    header.write('data', 36);
-    header.writeUInt32LE(pcm.length, 40);
     return {
-      wav: Buffer.concat([header, pcm]),
+      wav: pcmWav(pcm, config.sample_rate),
       missing_samples: missing,
       received_samples: received,
     };

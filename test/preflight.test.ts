@@ -370,7 +370,8 @@ test('MCP clients discover layer guidance, authoritative references, authoring p
       arguments: { component_id: 'wishos-packages' },
     });
     assert(!guide.isError);
-    assert(guide.content[0].resource.text.includes('whole'));
+    assert.equal(guide.content[0].resource.uri, 'wishos://skills/wishos-packages');
+    assert(guide.content[0].resource.text.length > 200);
     assert((await client.listPrompts()).prompts.some((p) => p.name === 'wishos-authoring'));
     const tools = (await client.listTools()).tools.map((t) => t.name);
     for (const tool of [
@@ -1046,6 +1047,141 @@ test('an explicit not-dispatched reply is a known failed install even if its cau
   } finally {
     await jobs.close();
     db.close();
+    await f.close();
+  }
+});
+
+test('absolute references must be canonical and cannot escape factory resources through dot segments', async () => {
+  const f = await fixture(),
+    d = device();
+  try {
+    await assert.rejects(
+      packageFiles(f.source, 'return notes.require("/system/../user/hidden.lua")'),
+      /reference_path/,
+    );
+    assert(!d.calls.some((c) => c.method === 'stat'));
+    await assert.rejects(
+      f.source.deliver(d.rpc, [await stage(f.source, 'file?query', 'x')], signal(), 'boot'),
+      /artifact_path/,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test('Harness result storage retains complete structured data beyond an old text preview length', async () => {
+  const { Store } = await import('../src/store.js');
+  const store = new Store(':memory:');
+  try {
+    const run = store.createRun('device', 'large', 'task').run;
+    const result = JSON.stringify({
+      format: 'wishos-result/2',
+      actions: [{ type: 'application', data: { text: 'x'.repeat(70000) } }],
+    });
+    store.finishRun(run.id, 'completed', result);
+    assert.deepEqual(JSON.parse(store.run(run.id).result), JSON.parse(result));
+  } finally {
+    store.close();
+  }
+});
+
+test('application install providers gate package placement, without restricting ordinary data or guessing MCU capacity', async () => {
+  const f = await fixture();
+  try {
+    const files = await packageFiles(f.source),
+      media = await stage(f.source, 'book.txt', 'data');
+    for (const allowed of ['user', 'flash']) {
+      const d = device();
+      const rpc: DeviceRpc = async (p, m, a) => {
+        if (p === '/sys/capabilities' && a.path === '/sys/apps') {
+          const reply = await d.rpc(p, m, a);
+          return {
+            ...reply,
+            result: {
+              ...reply.result,
+              install_providers: allowed,
+              factory_launcher: '/system/apps/launcher.json',
+            },
+          };
+        }
+        if (p === '/sys/transfers' && m === 'read')
+          return {
+            ok: true,
+            boot_id: 'boot',
+            result: { policy: { targets: [{ provider: 'flash' }] } },
+          };
+        if (p === '/fs' && m === 'mounts')
+          return {
+            ok: true,
+            boot_id: 'boot',
+            result: { providers: [{ id: 'flash', available: true }] },
+          };
+        return d.rpc(p, m, a);
+      };
+      const check = () =>
+        preflightBundle(f.source, files.files, {
+          compiler: nodeLuaCompiler,
+          rpc,
+          expectedBoot: 'boot',
+          signal: signal(),
+        });
+      if (allowed === 'user') await assert.rejects(check(), /application_storage_provider/);
+      else assert.equal((await check()).limits.application_install_providers, 'flash');
+      assert(
+        (
+          await preflightBundle(f.source, [media], {
+            compiler: nodeLuaCompiler,
+            rpc,
+            expectedBoot: 'boot',
+            signal: signal(),
+          })
+        ).ok,
+      );
+      assert(!d.calls.some((c) => ['begin', 'configure', 'stop'].includes(c.method)));
+    }
+  } finally {
+    await f.close();
+  }
+});
+
+test('a transfer target changing after preparation is rechecked before package bytes are written', async () => {
+  const f = await fixture(),
+    d = device();
+  let mounts = 0,
+    begins = 0;
+  try {
+    const files = await packageFiles(f.source);
+    const rpc: DeviceRpc = async (p, m, a) => {
+      if (p === '/sys/capabilities' && a.path === '/sys/apps') {
+        const reply = await d.rpc(p, m, a);
+        return { ...reply, result: { ...reply.result, install_providers: 'user' } };
+      }
+      if (p === '/sys/transfers' && m === 'read')
+        return {
+          ok: true,
+          boot_id: 'boot',
+          result: { policy: { targets: [{ provider: 'user' }, { provider: 'flash' }] } },
+        };
+      if (p === '/fs' && m === 'mounts')
+        return {
+          ok: true,
+          boot_id: 'boot',
+          result: {
+            providers: [
+              { id: 'user', available: ++mounts < 3 },
+              { id: 'flash', available: true },
+            ],
+          },
+        };
+      if (m === 'begin') begins++;
+      return d.rpc(p, m, a);
+    };
+    await assert.rejects(
+      f.source.deliver(rpc, files.files, signal(), 'boot'),
+      /application_storage_provider/,
+    );
+    assert.equal(begins, 0);
+  } finally {
     await f.close();
   }
 });

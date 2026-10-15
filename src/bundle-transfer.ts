@@ -1,15 +1,12 @@
 import { ResourceReplyError } from './resource-reply-error.js';
 import { TransportFailure } from './transport-failure.js';
 import { Buffer } from 'node:buffer';
-import { posix } from 'node:path';
 import type { DeviceRpc } from './os-remote.js';
 import {
   resolveFiles,
-  type BundleArtifact,
   type BundleSource,
-  type DeliveryFile,
 } from './bundle-files.js';
-import { preflightBundle, type PreflightOptions } from './preflight.js';
+import { preflightBundle, checkApplicationStorage, type PreflightOptions } from './preflight.js';
 export type { BundleArtifact, BundleReader, BundleSource } from './bundle-files.js';
 export async function deliverBundle(
   transport: DeviceRpc,
@@ -122,6 +119,21 @@ export async function deliverBundle(
         }
         break;
       }
+    if (preflight.packages.length) {
+      const apps = await rpc('/sys/capabilities', 'describe', { path: '/sys/apps' });
+      if (!apps.ok) throw new ResourceReplyError(apps);
+      if (typeof apps.result.install_providers === 'string') {
+        const currentPolicy = await call('read', {}),
+          currentVolumes = await rpc('/fs', 'mounts', {});
+        if (!currentVolumes.ok) throw new ResourceReplyError(currentVolumes);
+        checkApplicationStorage(
+          apps.result,
+          currentPolicy.policy ?? {},
+          currentVolumes.result.providers ?? [],
+          false,
+        );
+      }
+    }
     const start = await call('begin', {
       request_id: key,
       ...(remoteRequestId ? { remote_request_id: remoteRequestId } : {}),

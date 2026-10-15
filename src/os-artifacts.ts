@@ -2,8 +2,8 @@ import { nodeLuaCompiler } from './node-lua-compiler.js';
 import { preflightBundle, type PreflightOptions } from './preflight.js';
 import { deliverBundle } from './bundle-transfer.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, stat, unlink } from 'node:fs/promises';
-import { join, resolve, posix } from 'node:path';
+import { mkdir, open, unlink } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import type { DeviceRpc } from './os-remote.js';
 
@@ -70,14 +70,7 @@ export class ArtifactStore {
     const prior = this.db
       .prepare("SELECT result FROM os_managed_results WHERE substr(key,instr(key,':')+1)=?")
       .all(key.slice(key.indexOf(':') + 1)) as { result: string }[];
-    if (
-      prior.some(
-        (r) =>
-          JSON.parse(r.result).actions?.length ||
-          JSON.parse(r.result).sequence ||
-          JSON.parse(r.result).effects?.length,
-      )
-    )
+    if (prior.some((r) => JSON.parse(r.result).actions?.length || JSON.parse(r.result).sequence))
       throw Error('system_effect_reconciliation_required');
     const existing = this.preparing.get(key);
     if (existing) return existing;

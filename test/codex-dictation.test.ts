@@ -3,13 +3,9 @@ import assert from 'node:assert/strict';
 import { WebSocketServer, WebSocket } from 'ws';
 import { once } from 'node:events';
 import { CodexDictation, pcm16Mono } from '../src/adapters/codex-dictation.js';
-import { AudioStream } from '../src/voice.js';
+import { pcmWav } from '../src/voice.js';
 function wave() {
-  const stream = new AudioStream('test');
-  const frame = Buffer.alloc(1285);
-  frame[0] = 0x41;
-  stream.append(frame);
-  return stream.finish(1, true);
+  return pcmWav(Buffer.alloc(1280), 16000);
 }
 test('native dictation honors handshake, PCM order, final revisions, closure, cancellation and incomplete streams', async () => {
   for (const mode of ['success', 'premature', 'cancel']) {

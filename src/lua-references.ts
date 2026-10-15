@@ -74,21 +74,16 @@ export function luaReferences(source: string) {
     if (t.type === 1) break;
     tokens.push(t);
   }
-  const modules: { path?: string; line: number }[] = [],
-    calls: { path: string; method: string; line: number }[] = [];
+  const modules: { path?: string; line: number }[] = [];
   const text = (t: Token | undefined) =>
     t?.type === 2 ? literal(source.slice(t.range[0], t.range[1])) : undefined;
   for (let i = 0; i < tokens.length; i++) {
     if (tokens[i]?.value !== 'notes' || tokens[i + 1]?.value !== '.') continue;
     const method = tokens[i + 2]?.value;
-    if (!['require', 'call', 'request'].includes(String(method))) continue;
+    if (method !== 'require') continue;
     const arg = i + 3 + (tokens[i + 3]?.value === '(' ? 1 : 0),
       path = text(tokens[arg]);
-    if (method === 'require') modules.push({ path, line: tokens[i]!.line });
-    else if (path && tokens[arg + 1]?.value === ',') {
-      const name = text(tokens[arg + 2]);
-      if (name) calls.push({ path, method: name, line: tokens[i]!.line });
-    }
+    modules.push({ path, line: tokens[i]!.line });
   }
-  return { modules, calls };
+  return { modules };
 }

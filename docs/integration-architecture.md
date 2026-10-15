@@ -47,8 +47,9 @@ status fields in UI/metadata. A ready MCP connection alone is not `canTrigger`.
 ## Protocol findings
 
 - The public connector now pins official TypeScript MCP server/client 2.3.1
-  and explicitly negotiates 2026-07-28 plus older revisions. The inherited Notes
-  endpoint retains SDK 1.32.1 for compatibility. Specification 2026-07-28 includes: per-request metadata,
+  and explicitly negotiates 2026-07-28 plus older revisions on the same endpoint.
+  SDK 1.32.1 remains a development-only older-client fixture. Specification
+  2026-07-28 includes: per-request metadata,
   `server/discover`, resultType, subscriptions and MRTR replace parts of the old
   initialize/session/GET-SSE model. Keep older clients working and test both
   generations; do not merely advertise the new date on old behavior.
@@ -100,8 +101,7 @@ Keep stable device and connector IDs plus scoped pairing grants. Use mDNS and
 stable `.local` hostnames to avoid fixed DHCP; manual addresses are optional.
 Advertise a `_wishos._tcp` service from a connector. The connector returns a
 paired endpoint profile, including its stable hostname and relay endpoint.
-The firmware owner has implemented ordered endpoints in `/services/link`, retaining
-the single-endpoint legacy form. Do not invent another device protocol; retain
+The firmware owner has implemented ordered endpoints in `/services/link`. Do not invent another device protocol; retain
 `wishos-rpc/1`, boot IDs, operation IDs and existing bounded frame transport.
 Do not replay an uncertain mutating command just because the route changed.
 

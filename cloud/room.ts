@@ -4,7 +4,6 @@ import { packageJobKinds, runPackageJob } from '../src/package-jobs';
 import { guardedInvocation } from '../src/preflight-call';
 import type { DeviceRpc } from '../src/os-remote';
 import { cloudLuaCompiler } from './lua-compiler';
-import { preflightBundle } from '../src/preflight';
 import { CloudArtifacts, CloudJobStore } from './artifacts';
 import { ResourceJobs } from '../src/resource-jobs';
 import { canonicalValue } from '../src/control-receipts';

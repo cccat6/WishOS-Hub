@@ -1,3 +1,4 @@
+import { canonicalValue } from './control-receipts.js';
 /** Portable transport bridge. Handlers are upstream service adapters; device apps use the managed system APIs. */
 import { createHash } from 'node:crypto';
 import { MemoryRemoteJournal, type RemoteJournal } from './os-journal.js';
@@ -25,18 +26,6 @@ export interface DeviceRpc {
   ): Promise<{ boot_id: string; ok: boolean; error?: string; result: any }>;
 }
 export class RetryableRemoteError extends Error {}
-export function canonical(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
-  return (
-    '{' +
-    Object.keys(value)
-      .sort()
-      .map((k) => JSON.stringify(k) + ':' + canonical((value as Record<string, unknown>)[k]))
-      .join(',') +
-    '}'
-  );
-}
 type Task = {
   boot: string;
   request: RemoteRequest;
@@ -170,7 +159,7 @@ export class OsRemoteBridge {
             boot: peek.boot_id,
             request,
             fingerprint: createHash('sha256')
-              .update(canonical({ route: request.route, payload: request.payload }))
+              .update(canonicalValue({ route: request.route, payload: request.payload }))
               .digest('hex'),
             abort: new AbortController(),
             state: 'running',

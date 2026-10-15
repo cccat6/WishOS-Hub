@@ -20,6 +20,12 @@ npm run build
 npm run launch
 ```
 
+The same TypeScript/JavaScript source runs on each supported OS. Platform releases
+bundle the matching Node executable and Sharp's native image library; this is
+packaging and startup validation, not separate business implementations. Source
+users install Node and run the commands above without building C++ themselves.
+The Lua preflight parser is one portable WASM artifact shared with cloud Workers.
+
 The default setup UI is `http://127.0.0.1:18762/`. Use `--port` for a different
 port; leave an existing unrelated service alone. The local setup UI is loopback
 only. Device WS accepts a separate per-device pairing grant on the LAN listener.
@@ -127,9 +133,9 @@ npm run cloud:bundle
 npm run package:release
 ```
 
-The inherited rendering regression tests use `.venv` plus `requirements.txt`;
-Python is a test/legacy-renderer dependency, not a requirement of the released
-connector. Firmware and physical-device tests live in the terminal repository.
+The product build and tests require Node.js only. Internal Python/font research
+files remain outside the product entrypoints, CI and release payload; they are not
+a WishOS or Hub dependency. Firmware and physical-device tests live in the terminal repository.
 Host fixtures verify protocol and fault behavior, not live vendor authorization
 or physical panel output. See [validation](docs/validation.md).
 
@@ -168,3 +174,14 @@ is false. Hub completes static and boot/revision checks first, records the expli
 runtime stop, then performs preparation/transfer. Failure may leave that runtime
 stopped or a new revision installed; consult receipts. No implicit retry, automatic
 restoration or reduction of native resource protections occurs.
+
+Application storage is chosen by the device package, not by its MCU or Flash size.
+Read `/sys/apps` metadata `install_providers` and `factory_launcher`. The initial
+Launcher is an ordinary directory package; user apps and replacement launchers use
+allowed providers and versioned updates. Writability and fallback paths come from
+the device contract rather than a Hub hardcoded policy. Download targets, priority, explicit Flash fallback and quotas
+remain `/sys/transfers` policy. Ordinary media delivery is not app installation.
+
+The working-tree audit and its remaining integration checks are in
+[full-audit.md](docs/full-audit.md). Published preview evidence describes its pinned
+release source, not later uncommitted changes.

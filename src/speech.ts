@@ -1,7 +1,6 @@
 import { speechWavRate } from './voice-resample.js';
 import { z } from 'zod';
 import { HttpAsr, type Asr, type NativeSpeech } from './voice.js';
-import type { Store } from './store.js';
 const endpoint = z
   .string()
   .max(2048)
@@ -47,45 +46,22 @@ export interface SpeechHarness {
 export class SpeechSettings {
   private config: SpeechConfig;
   constructor(
-    private store: Store,
     initial?: unknown,
-    private legacy?: Asr,
-    preferInitial = false,
+    private fallbackAsr?: Asr,
   ) {
-    store.db.exec(
-      'CREATE TABLE IF NOT EXISTS service_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
-    );
-    const saved = store.db
-      .prepare("SELECT value FROM service_settings WHERE key='speech'")
-      .get() as { value: string } | undefined;
-    this.config = SpeechConfig.parse(
-      saved && !preferInitial ? JSON.parse(saved.value) : (initial ?? {}),
-    );
+    this.config = SpeechConfig.parse(initial ?? {});
   }
   get() {
     return structuredClone(this.config);
   }
-  update(input: unknown) {
-    const config = SpeechConfig.parse(input);
-    if (config.source === 'third-party' && !config.thirdParty)
-      throw Error('Third-party transcription is not configured');
-    this.store.db
-      .prepare(
-        "INSERT INTO service_settings VALUES('speech',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-      )
-      .run(JSON.stringify(config));
-    this.config = config;
-    this.legacy = undefined;
-    return this.get();
-  }
   private thirdParty(config: SpeechConfig): Asr | undefined {
     return config.thirdParty
       ? new HttpAsr(config.thirdParty.url, config.thirdParty.token, config.thirdParty)
-      : this.legacy;
+      : this.fallbackAsr;
   }
   describe(harness: SpeechHarness) {
     const native = harness.nativeSpeech;
-    const third = !!this.config.thirdParty || !!this.legacy;
+    const third = !!this.config.thirdParty || !!this.fallbackAsr;
     const effective =
       this.config.source === 'third-party'
         ? third

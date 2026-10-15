@@ -1,5 +1,4 @@
 import {
-  ControlGuard,
   controlReceipt,
   type ControlReceiptStore,
   type ControlRecord,

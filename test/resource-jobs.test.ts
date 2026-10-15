@@ -172,3 +172,69 @@ test('host artifact quota reserves concurrent work and reclaims expired or aband
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('active admission is independent of the paginated history window', async () => {
+  const db = new DatabaseSync(':memory:'),
+    jobs = new ResourceJobs(new HostJobStore(db), { concurrency: 2, timeoutMs: 10000 });
+  let finish!: () => void;
+  try {
+    jobs.submit('old-active', 'a', 'stage', () => new Promise<void>((r) => (finish = r)));
+    await new Promise((r) => setImmediate(r));
+    db.prepare('UPDATE resource_jobs SET updated=0 WHERE id=?').run('old-active');
+    for (let i = 0; i < 105; i++) {
+      jobs.submit('later-' + i, String(i), 'stage', async () => ({ ok: true }));
+      await jobs.wait('later-' + i);
+    }
+    assert.equal(jobs.list().length, 100);
+    assert(!jobs.list().some((j) => j.id === 'old-active'));
+    assert.equal(jobs.activeCount, 1);
+    finish();
+    await jobs.wait('old-active');
+    assert.equal(jobs.activeCount, 0);
+  } finally {
+    finish?.();
+    await jobs.close();
+    db.close();
+  }
+});
+
+test('image preparation pins an expired source through concurrent artifact cleanup and releases it afterwards', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wishos-image-lease-')),
+    db = new DatabaseSync(':memory:'),
+    store = new ArtifactStore(db, root, 1024 * 1024);
+  try {
+    const image = await sharp({
+      create: { width: 128, height: 128, channels: 3, background: 'red' },
+    })
+      .png()
+      .toBuffer();
+    const source = await store.stageStream(
+      (async function* () {
+        yield image;
+      })(),
+      image.length,
+    );
+    db.prepare('UPDATE os_artifacts SET created=0 WHERE id=?').run(source.id);
+    const preparing = prepareImage(
+      store,
+      {
+        artifact_id: source.id,
+        width: 128,
+        height: 128,
+        format: 'indexed8',
+        palette: [
+          [0, 0, 0],
+          [255, 0, 0],
+        ],
+      },
+      AbortSignal.timeout(5000),
+    );
+    await store.stage({ text: 'concurrent' });
+    assert.equal((await preparing).size, 128 * 128);
+    await store.stage({ text: 'after-release' });
+    assert.throws(() => store.get(source.id), /artifact_not_found/);
+  } finally {
+    db.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

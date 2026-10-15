@@ -1,6 +1,5 @@
 import { ResourceReplyError } from './resource-reply-error.js';
 import { TransportFailure } from './transport-failure.js';
-import { Buffer } from 'node:buffer';
 import { posix } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import {

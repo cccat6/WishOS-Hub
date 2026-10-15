@@ -1,8 +1,10 @@
 import { WebSocket, type ClientOptions } from 'ws';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { randomUUID } from 'node:crypto';
-import { MAX_RECORDING_BYTES, type NativeSpeech } from '../voice.js';
+import { type NativeSpeech } from '../voice.js';
 import { SpeechUnavailable } from '../speech.js';
+// Upstream parser allocation policy, independent of a device recording duration.
+const MAX_DICTATION_PCM_BYTES = 32 * 1024 * 1024;
 export interface CodexSpeechOptions {
   appVersion: string;
   language?: string;
@@ -24,7 +26,7 @@ export type DictationConnector = (
 export function pcm16Mono(wav: Buffer): Buffer {
   if (
     wav.length < 44 ||
-    wav.length > MAX_RECORDING_BYTES + 200 ||
+    wav.length > MAX_DICTATION_PCM_BYTES + 200 ||
     wav.toString('ascii', 0, 4) !== 'RIFF' ||
     wav.toString('ascii', 8, 12) !== 'WAVE'
   )
@@ -53,7 +55,7 @@ export function pcm16Mono(wav: Buffer): Buffer {
     }
     at = next + (n % 2);
   }
-  if (!format || !pcm?.length || pcm.length % 2 || pcm.length > MAX_RECORDING_BYTES)
+  if (!format || !pcm?.length || pcm.length % 2 || pcm.length > MAX_DICTATION_PCM_BYTES)
     throw Error('Invalid or empty PCM');
   return pcm;
 }

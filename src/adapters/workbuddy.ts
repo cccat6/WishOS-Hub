@@ -21,25 +21,6 @@ export class WorkBuddyAdapter implements HarnessAdapter {
     if (!token) throw Error('workbuddy_authorization_required');
     return { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' };
   }
-  async listSessions() {
-    return boundedJson(
-      await this.fetcher(new URL('/openapi/v2/tasks?page=1&size=20', this.options.endpoint), {
-        headers: this.headers(),
-        signal: AbortSignal.timeout(20000),
-      }),
-    );
-  }
-  async createSession(prompt: string) {
-    if (!prompt.trim()) throw Error('workbuddy_initial_instruction_required');
-    return boundedJson(
-      await this.fetcher(new URL('/openapi/v2/tasks', this.options.endpoint), {
-        method: 'POST',
-        headers: this.headers(),
-        body: JSON.stringify({ prompt }),
-        signal: AbortSignal.timeout(20000),
-      }),
-    );
-  }
   async open(nativeId?: string) {
     if (!nativeId) throw Error('workbuddy_select_task_first');
     if (this.sessions.has(nativeId)) return nativeId;
