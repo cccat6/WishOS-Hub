@@ -21,6 +21,12 @@ URLs or parse a response larger than its discovered budgets.
 
 `stage_resource` returns a job identity, not an artifact immediately. Poll
 `read_resource_job`. Stage separate files; reference completed artifact IDs. Read the component index and pinned authoritative OS references through get_guidance or MCP resources. A packaged application includes its header and sorted JSONL inventory; run package preflight before delivery.
+For a direct MCP installation prefer prepare_package → deploy_package. Its
+validation/install/activation receipts are separate. A manually composed direct
+resource workflow must release its own committed transfer_id after its native
+consumer has acquired the file/package lease. Generic deliver_resources does not
+automatically consume that slot. A managed result is different: the OS adopts and
+releases its transfer; do not insert an extra release into its ordered actions.
 `prepare_image` is host-side, with explicit discovered geometry and palette.
 `deliver_resources` delivers a verified bundle, not a displayed frame or launched
 app. Native packing/encoding is adapter-specific; inspect the display API.
@@ -35,7 +41,12 @@ of type `application` or `system`. They may alternate, with no fixed count:
  {"type":"system","path":"/sys/apps","method":"install","args":{"manifest":{"$asset":"app.json"},"package":{"$asset":"package.json"},"validation_id":{"$previous":"operation_id"},"expected_revision":{"$previous":"revision"}}},
  {"type":"system","path":"/sys/apps","method":"launch","args":{"id":{"$previous":"application_id"}}},
  {"type":"application","recipient":"foreground","topic":"open","data":{}}
-],"files":[{"path":"app.json","artifact_id":"completed-staging-id"}]}
+],"files":[
+ {"path":"package.json","artifact_id":"prepared-header-id","kind":"json"},
+ {"path":"files.jsonl","artifact_id":"prepared-inventory-id"},
+ {"path":"app.json","artifact_id":"application-manifest-id","kind":"json"},
+ {"path":"main.lua","artifact_id":"program-source-id"}
+]}
 ```
 
 `origin` is the exact requesting VM. Default `wait:processed` waits for its

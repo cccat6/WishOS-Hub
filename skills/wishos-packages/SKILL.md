@@ -44,3 +44,8 @@ registered during on_start; schema validation is separate from current native
 render readiness. No preview/preflight establishes optical output or arbitrary
 runtime semantics. Read get_device_components for actual device composition and
 get_guidance for the pinned authoritative OS references, including packages.
+
+Typed deployment releases only its own committed transfer receipt after native
+validation admission acquires the package lease. Generic resource delivery keeps
+that receipt for explicit consumer adoption; a managed OS result adopts it itself.
+Do not add or reorder managed actions to compensate for transport bookkeeping.
