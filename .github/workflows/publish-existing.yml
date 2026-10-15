@@ -1,0 +1,49 @@
+name: Publish verified artifacts
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful Build and release run ID
+        required: true
+      tag:
+        description: Existing release tag for that exact source commit
+        required: true
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN_ID: ${{ inputs.run_id }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Verify provenance
+        shell: bash
+        run: |
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .conclusion)" = success
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .head_sha)" = "$(git rev-parse HEAD)"
+          gh release view "$RELEASE_TAG" --json isPrerelease --jq .isPrerelease | grep -qx true
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.run_id }}
+          pattern: wishos-hub-*
+          path: release-assets
+          merge-multiple: true
+      - name: Verify every archive digest
+        shell: bash
+        run: |
+          cd release-assets
+          test "$(find . -name '*.sha256' | wc -l)" -ge 1
+          sha256sum -c *.sha256
+          sha256sum *.tar.gz *.zip > SHA256SUMS
+      - name: Publish unchanged archives
+        shell: bash
+        run: |
+          find release-assets -maxdepth 1 -type f -print0 | xargs -0 gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json url,assets
