@@ -244,3 +244,92 @@ test('binary artifacts stream without text encoding, enforce quota and remove pa
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('large application data plus a resource effect releases assets without adding an invalid effect field', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'wish-both-')),
+    db = new DatabaseSync(':memory:');
+  try {
+    const artifacts = new ArtifactStore(db, dir),
+      methods: string[] = [];
+    const rpc = async (_p: string, method: string) => {
+      methods.push(method);
+      return {
+        ok: true,
+        boot_id: 'b',
+        result:
+          method === 'begin'
+            ? { id: 4, chunk_bytes: 1024 }
+            : method === 'commit'
+              ? { root: '/card/result' }
+              : {},
+      };
+    };
+    const route = managedAgentRoute({
+      rpc,
+      artifacts,
+      start: () => ({ id: 'mixed-result' }),
+      status: () => ({
+        status: 'completed',
+        result: JSON.stringify({
+          format: 'wishos-result/1',
+          application: { text: 'x'.repeat(2000) },
+          effects: [
+            {
+              kind: 'resource_call',
+              path: '/services/time',
+              method: 'configure',
+              args: { settings: { timezone: 'UTC0' } },
+            },
+          ],
+        }),
+      }),
+    });
+    const result: any = await route(
+      {
+        id: 1,
+        request_id: 'mixed',
+        route: 'wishos.ai',
+        payload: {
+          format: 'wishos-ai/1',
+          target: 'both',
+          input: { text: 'large data and settings' },
+        },
+      },
+      new AbortController().signal,
+    );
+    assert.equal(result.application.file, '/card/result/reply.json');
+    assert.equal(result.effects[0].transfer_id, undefined);
+    assert.equal(methods.at(-1), 'release');
+  } finally {
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('cancelled delivery still sends its cleanup RPC after the transfer signal aborts', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'wish-cancel-')),
+    db = new DatabaseSync(':memory:');
+  try {
+    const store = new ArtifactStore(db, dir),
+      artifact = await store.stage({ text: 'x'.repeat(2048) });
+    const controller = new AbortController(),
+      methods: string[] = [];
+    const rpc = async (_path: string, method: string, args: any) => {
+      methods.push(method);
+      if (method === 'begin') assert.equal(args.remote_request_id, 7);
+      if (method === 'chunk') controller.abort();
+      return {
+        ok: true,
+        boot_id: 'b',
+        result: method === 'begin' ? { id: 3, chunk_bytes: 1024 } : {},
+      };
+    };
+    await assert.rejects(
+      store.deliver(rpc, [{ path: 'file', artifact_id: artifact.id }], controller.signal, 'b', 7),
+    );
+    assert.equal(methods.at(-1), 'abort');
+  } finally {
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

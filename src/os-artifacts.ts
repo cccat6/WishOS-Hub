@@ -121,6 +121,7 @@ export class ArtifactStore {
     files: { path: string; artifact_id: string }[],
     signal: AbortSignal,
     expectedBoot?: string,
+    remoteRequestId?: number,
   ) {
     let boot = expectedBoot;
     const rpc: DeviceRpc = async (path, method, args) => {
@@ -221,6 +222,7 @@ export class ArtifactStore {
       }
     const start = await call('begin', {
       request_id: key,
+      ...(remoteRequestId ? { remote_request_id: remoteRequestId } : {}),
       bytes: String(total),
       files: files.length,
     });
@@ -268,7 +270,7 @@ export class ArtifactStore {
         error instanceof Error &&
         !/disconnected|transport|outcome_unknown|timeout/i.test(error.message)
       )
-        await call('abort', { id: start.id }).catch(() => {});
+        await rpc('/sys/transfers', 'abort', { id: start.id }).catch(() => {});
       throw error;
     }
   }

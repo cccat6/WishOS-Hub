@@ -81,7 +81,13 @@ export function managedAgentRoute(options: {
       if (result.files?.length) {
         let delivered;
         try {
-          delivered = await options.artifacts.deliver(options.rpc, result.files, signal, r.boot_id);
+          delivered = await options.artifacts.deliver(
+            options.rpc,
+            result.files,
+            signal,
+            r.boot_id,
+            r.id,
+          );
         } catch (error) {
           if (
             error instanceof Error &&
@@ -92,13 +98,16 @@ export function managedAgentRoute(options: {
             throw new RetryableRemoteError(error.message);
           throw error;
         }
-        for (const e of result.effects ?? []) e.transfer_id = delivered.transfer_id;
+        const assetEffects = (result.effects ?? []).filter((e: any) =>
+          ['application', 'presentation'].includes(e.kind),
+        );
+        for (const e of assetEffects) e.transfer_id = delivered.transfer_id;
         if (result.application?.resource)
           result.application = {
             ...result.application,
             file: delivered.root + '/' + result.application.resource,
           };
-        if (!(result.effects ?? []).length)
+        if (!assetEffects.length)
           await options.rpc('/sys/transfers', 'release', { id: delivered.transfer_id });
         delete result.files;
       }
