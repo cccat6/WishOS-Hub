@@ -20,6 +20,8 @@ export class WireDevice {
   calls: any[] = [];
   writes = 0;
   boot = 'fixture-boot';
+  descriptions: Record<string, any> = {};
+  board?: Record<string, unknown>;
   resourceHandler?: (call: any) => Promise<unknown> | unknown;
   handler?: (call: any) => Promise<unknown> | unknown;
   private bytes = Buffer.alloc(4096);
@@ -69,7 +71,8 @@ export class WireDevice {
       error = 'boot_changed';
     } else if (call.path === '/sys/capabilities' && call.method === 'describe')
       result =
-        call.args.path === '/sys/capabilities'
+        this.descriptions[call.args.path] ??
+        (call.args.path === '/sys/capabilities'
           ? { path: '/sys/capabilities', methods: 'list,describe', read_methods: 'list,describe' }
           : call.args.path === '/services/ai'
             ? {
@@ -80,14 +83,15 @@ export class WireDevice {
                 methods: 'read,submit',
                 read_methods: 'read',
               }
-            : { path: call.args.path, methods: 'read,write', read_methods: 'read' };
+            : { path: call.args.path, methods: 'read,write', read_methods: 'read' });
     else if (call.path === '/sys/capabilities')
       result = {
         devices: [{ path: '/dev/fixture', methods: 'read,write', read_methods: 'read' }],
         more: false,
       };
     else if (call.path === '/services/remote') result = { state: 'empty' };
-    else if (call.path === '/sys/board') result = { board: 'fixture', mac: '02:00:00:00:00:01' };
+    else if (call.path === '/sys/board')
+      result = this.board ?? { board: 'fixture', mac: '02:00:00:00:00:01' };
     else if (call.path === '/dev/fixture') {
       if (call.method === 'write') ++this.writes;
       if (this.handler) {

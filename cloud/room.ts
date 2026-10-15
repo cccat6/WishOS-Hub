@@ -1,3 +1,8 @@
+import { packageJobKinds, runPackageJob } from '../src/package-jobs';
+import { guardedInvocation } from '../src/preflight-call';
+import type { DeviceRpc } from '../src/os-remote';
+import { cloudLuaCompiler } from './lua-compiler';
+import { preflightBundle } from '../src/preflight';
 import { CloudArtifacts, CloudJobStore } from './artifacts';
 import { ResourceJobs } from '../src/resource-jobs';
 import { canonicalValue } from '../src/control-receipts';
@@ -426,6 +431,7 @@ export class WishosRoom extends DurableObject<WishosCloudEnv> {
           maxFileBytes: this.artifacts.maxFile,
           maxStoredBytes: this.artifacts.maxRoom,
           ttlMs: 3600000,
+          packagePreflight: true,
           staging: true,
           delivery: true,
         },
@@ -441,11 +447,13 @@ export class WishosRoom extends DurableObject<WishosCloudEnv> {
       const v = payload as any;
       if (
         !v ||
-        !['stage', 'image', 'deliver'].includes(v.kind) ||
+        !['stage', 'image', 'deliver', ...packageJobKinds].includes(v.kind) ||
         !v.input ||
         typeof v.input !== 'object'
       )
         throw new CloudError(400, 'resource_job_request');
+      if (v.input.device_id && !this.device(v.input.device_id))
+        throw new CloudError(404, 'device_not_found');
       if (v.kind === 'image') throw new CloudError(409, 'image_preparation_requires_user_host');
       if (
         v.kind === 'deliver' &&
@@ -458,32 +466,41 @@ export class WishosRoom extends DurableObject<WishosCloudEnv> {
       if (typeof id !== 'string' || !id.match(/^[A-Za-z0-9_.:-]{1,128}$/))
         throw new CloudError(400, 'resource_job_identity');
       const fingerprint = await hash(canonicalValue({ kind: v.kind, input: v.input }));
+      const rpcFor =
+        (deviceId: string): DeviceRpc =>
+        async (path, method, args) => {
+          const reply = await this.api(
+            '/api/os/devices/' + encodeURIComponent(deviceId) + '/invoke',
+            {
+              path,
+              method,
+              args,
+              expected_boot_id: v.input.expected_boot_id,
+              request_id: crypto.randomUUID(),
+            },
+          );
+          return reply as ControlReply;
+        };
       const job = this.jobs.submit(id, fingerprint, v.kind, (signal) =>
         v.kind === 'stage'
           ? this.artifacts.stage(v.input, signal)
-          : deliverBundle(
-              async (path, method, args) => {
-                if (this.sockets('connector').length)
-                  return (await this.host(
-                    '/api/os/devices/' + encodeURIComponent(v.input.device_id) + '/invoke',
-                    {
-                      path,
-                      method,
-                      args,
-                      expected_boot_id: v.input.expected_boot_id,
-                      request_id: crypto.randomUUID(),
-                    },
-                  )) as ControlReply;
-                const wire = this.wires.get(v.input.device_id);
-                if (!wire?.boot) throw Error('device_disconnected');
-                return wire.rpc(path, method, args);
-              },
-              v.input.files,
-              signal,
-              v.input.expected_boot_id,
-              undefined,
-              this.artifacts,
-            ),
+          : packageJobKinds.includes(v.kind)
+            ? runPackageJob(v.kind, v.input, {
+                source: this.artifacts,
+                stage: (text, signal) => this.artifacts.stage({ text }, signal),
+                compiler: cloudLuaCompiler,
+                rpc: rpcFor,
+                signal,
+              })
+            : deliverBundle(
+                rpcFor(v.input.device_id),
+                v.input.files,
+                signal,
+                v.input.expected_boot_id,
+                undefined,
+                this.artifacts,
+                { compiler: cloudLuaCompiler },
+              ),
       );
       this.ctx.waitUntil(this.jobs.wait(id));
       await this.ctx.storage.setAlarm(Date.now() + 3600000);
@@ -538,7 +555,23 @@ export class WishosRoom extends DurableObject<WishosCloudEnv> {
             args: { path: input.path },
             expected_boot_id: input.expected_boot_id,
           }),
-        () => raw(input),
+        () =>
+          guardedInvocation(
+            (path, method, args) =>
+              raw({
+                path,
+                method,
+                args,
+                expected_boot_id: input.expected_boot_id,
+                request_id: crypto.randomUUID(),
+              }),
+            cloudLuaCompiler,
+            input.path,
+            input.method,
+            input.args,
+            AbortSignal.timeout(30000),
+            input.expected_boot_id ?? this.wires.get(id!)?.boot ?? '',
+          ),
       );
     }
     if (this.sockets('connector').length) return this.host(path, payload);

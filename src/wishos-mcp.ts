@@ -1,4 +1,6 @@
-import { McpServer } from '@modelcontextprotocol/server';
+import { bootRpc, readDeviceFile } from './device-files.js';
+import { registerGuidance, guideToolReply, guidanceIndexUri } from './guidance.js';
+import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod-modern';
 import type { HubApi } from './api-types.js';
 /** Model-facing integration for the portable resource ABI. No device geometry,
@@ -15,14 +17,53 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
         '2024-11-05',
       ],
       instructions:
-        'Discover the selected device and resource capabilities first. Use /sys/apps for installed package references and lifecycle, and inspect the selected default package source as a hardware-specific reference. The launcher is an ordinary replaceable application. Preserve the independent /sys/navigation home/voice entry; explain controls, first-use guidance, help and task feedback when creating or changing an application. Do not introduce active/passive user work modes. Hardware drivers are compiled; UI, pages, input meanings and application behavior are ordinary runtime packages that can be replaced without firmware changes. UI layout, font/image rendering and presentation are system services; applications provide descriptions and behavior. Applications use /services/ai for managed AI requests; provider and Harness protocols belong to the user-owned connector. New results are ordered application/system actions, which may alternate. Discover the result/2 schema, receiver identity and completion contract before generating a sequence. The system coordinates application replacement after the appropriate notifications. Stage large files/code/images on the Hub with stage_resource; do not send arbitrary source download URLs to the device. Inspect /sys/transfers storage policy, physical partitions, quotas and runtime parser budgets. Pre-extract large JSON/XML and index books upstream. Use a presentation effect for UI-only output. Inspect /sys/ui capabilities and a device-provided UI example before generating its document format. Logs and telemetry are separate system services; never include prompts, credentials, audio or arbitrary log text in telemetry. Use advertised resource calls and file paths, never GPIO/register access. Keep deterministic work local; use a remote route only for an explicit application action. An accepted request is not physical completion: inspect its completion/event receipt. A timed-out mutation must be reconciled before retry. Display drivers declare their own colors, geometry and completion models; never infer them from the MCU or a previous device. Recordings are compressed blocks; durable upload, speech recognition, Harness admission and displayed output are separate stages. Use the existing Harness session tools for the user task, then explicitly present the result through the device resources.',
+        'Before authoring or deploying, read wishos://guidance/components or call get_guidance; skills are supplied by MCP resources and tool fallback, not assumed installed on the client. Discover the selected device and resource capabilities first. Use /sys/apps for installed package references and lifecycle, and inspect the selected default package source as a hardware-specific reference. The launcher is an ordinary replaceable application. Preserve the independent /sys/navigation home/voice entry; explain controls, first-use guidance, help and task feedback when creating or changing an application. Do not introduce active/passive user work modes. Hardware drivers are compiled; UI, pages, input meanings and application behavior are ordinary runtime packages that can be replaced without firmware changes. UI layout, font/image rendering and presentation are system services; applications provide descriptions and behavior. Applications use /services/ai for managed AI requests; provider and Harness protocols belong to the user-owned connector. New results are ordered application/system actions, which may alternate. Discover the result/2 schema, receiver identity and completion contract before generating a sequence. The system coordinates application replacement after the appropriate notifications. Stage large files/code/images on the Hub with stage_resource; do not send arbitrary source download URLs to the device. Inspect /sys/transfers storage policy, physical partitions, quotas and runtime parser budgets. Pre-extract large JSON/XML and index books upstream. Use a presentation effect for UI-only output. Inspect /sys/ui capabilities and a device-provided UI example before generating its document format. Logs and telemetry are separate system services; never include prompts, credentials, audio or arbitrary log text in telemetry. Use advertised resource calls and file paths, never GPIO/register access. Keep deterministic work local; use a remote route only for an explicit application action. An accepted request is not physical completion: inspect its completion/event receipt. A timed-out mutation must be reconciled before retry. Display drivers declare their own colors, geometry and completion models; never infer them from the MCU or a previous device. Recordings are compressed blocks; durable upload, speech recognition, Harness admission and displayed output are separate stages. Use the existing Harness session tools for the user task, then explicitly present the result through the device resources.',
+    },
+  );
+  registerGuidance(server);
+  server.registerTool(
+    'get_device_components',
+    {
+      description:
+        'Read the boot-scoped component index advertised by the selected device. Lists actual system, selected native drivers/topology and startup application references; does not mount storage or infer peripherals from its MCU.',
+      inputSchema: z.object({ device_id: z.string(), expected_boot_id: z.string() }),
+    },
+    async ({ device_id, expected_boot_id }) => {
+      const rpc = bootRpc(async (path, method, args) => {
+        const reply = await api('/api/os/devices/' + encodeURIComponent(device_id) + '/invoke', {
+          path,
+          method,
+          args,
+          expected_boot_id,
+        });
+        return JSON.parse(reply.content[0]!.text);
+      }, expected_boot_id);
+      const board = await rpc('/sys/board', 'read', {});
+      if (!board.ok) throw Error(board.error);
+      const index = board.result.component_index;
+      if (index?.format !== 'wishos-components/1' || typeof index.file !== 'string')
+        throw Error('component_index_not_advertised');
+      const bytes = await readDeviceFile(rpc, index.file, 256 * 1024, AbortSignal.timeout(30000)),
+        document = JSON.parse(
+          new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes),
+        );
+      if (document.format !== index.format || !Array.isArray(document.components))
+        throw Error('component_index_format');
+      return guideToolReply({
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({ boot_id: board.boot_id, file: index.file, ...document }),
+          },
+        ],
+      });
     },
   );
   function tool<S extends z.ZodRawShape>(
     name: string,
     description: string,
     shape: S,
-    run: (input: z.infer<z.ZodObject<S>>) => ReturnType<HubApi>,
+    run: (input: z.infer<z.ZodObject<S>>) => Promise<CallToolResult>,
   ) {
     server.registerTool(name, { description, inputSchema: z.object(shape) }, run);
   }
@@ -47,7 +88,7 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
     'server_capabilities',
     'Read this MCP deployment resource limits and available server preparation capabilities; device capabilities are discovered separately.',
     {},
-    () => api('/api/service'),
+    async () => guideToolReply(await api('/api/service')),
   );
   tool('list_devices', 'List connected devices and their transport state.', {}, () =>
     api('/api/devices'),
@@ -69,7 +110,8 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
     'describe_resource',
     'Read the selected resource capability and lifecycle metadata without starting it.',
     { device_id: z.string(), path: z.string() },
-    ({ device_id, path }) => invoke(device_id, '/sys/capabilities', 'describe', { path }),
+    async ({ device_id, path }) =>
+      guideToolReply(await invoke(device_id, '/sys/capabilities', 'describe', { path })),
   );
   tool(
     'invoke_resource',
@@ -139,10 +181,70 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
     {
       device_id: z.string(),
       expected_boot_id: z.string(),
-      files: z.array(z.object({ path: z.string(), artifact_id: z.string() })),
+      files: z.array(
+        z.object({
+          path: z.string(),
+          artifact_id: z.string(),
+          kind: z.enum(['json', 'lua', 'asset']).optional(),
+        }),
+      ),
       request_id: z.string().optional(),
     },
     ({ request_id, ...input }) => api('/api/os/jobs', { kind: 'deliver', input, request_id }),
+  );
+  const packageFile = z.object({
+    path: z.string(),
+    artifact_id: z.string(),
+    kind: z.enum(['json', 'lua', 'asset']).optional(),
+  });
+  const target = { device_id: z.string().optional(), expected_boot_id: z.string().optional() };
+  const job = (name: string, kind: string, description: string, shape: z.ZodRawShape) =>
+    tool(
+      name,
+      description,
+      { ...shape, request_id: z.string().optional() },
+      ({ request_id, ...input }) => api('/api/os/jobs', { kind, input, request_id }),
+    );
+  job(
+    'preflight_bundle',
+    'preflight',
+    'Compile/check the complete immutable staged file set before any device write. An optional boot-scoped target adds actual capability and declared budget checks. Does not execute Lua or prove arbitrary program semantics.',
+    { ...target, files: z.array(packageFile).min(1) },
+  );
+  job(
+    'prepare_package',
+    'package_prepare',
+    'Build a sorted SHA-256 inventory and package header for complete runtime files, then run real preflight. Returns files for deploy_package; no device writes.',
+    { ...target, files: z.array(packageFile).min(1), manifest: z.string().default('app.json') },
+  );
+  job(
+    'deploy_package',
+    'package_deploy',
+    'Preflight the complete package, deliver it, await native validation and install with a matching ticket/catalog revision. Activation is optional and has separate completion. Poll read_resource_job and retain receipts before retrying uncertain effects.',
+    {
+      device_id: z.string(),
+      expected_boot_id: z.string(),
+      files: z.array(packageFile).min(1),
+      package: z.string().optional(),
+      expected_revision: z.number().int().nonnegative().optional(),
+      persist: z.boolean().default(true),
+      activate: z.boolean().default(false),
+    },
+  );
+  job(
+    'update_package',
+    'package_update',
+    'Replace whole files/delete files in a new immutable revision of an installed package. Reads unchanged control sources for complete preflight; unchanged binary assets stay on device and require native local-copy digest verification. Never edit lines or silently merge a changed catalog base. User data stays outside application revisions.',
+    {
+      device_id: z.string(),
+      expected_boot_id: z.string(),
+      application_id: z.string(),
+      expected_revision: z.number().int().nonnegative(),
+      replacements: z.array(packageFile),
+      delete: z.array(z.string()).default([]),
+      persist: z.boolean().default(true),
+      activate: z.boolean().default(false),
+    },
   );
   tool(
     'harness_usage',

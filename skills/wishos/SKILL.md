@@ -20,7 +20,7 @@ prepare heavy resources upstream. Do not make the terminal fetch arbitrary sourc
 URLs or parse a response larger than its discovered budgets.
 
 `stage_resource` returns a job identity, not an artifact immediately. Poll
-`read_resource_job`. Stage separate files; reference completed artifact IDs.
+`read_resource_job`. Stage separate files; reference completed artifact IDs. Read the component index and pinned authoritative OS references through get_guidance or MCP resources. A packaged application includes its header and sorted JSONL inventory; run package preflight before delivery.
 `prepare_image` is host-side, with explicit discovered geometry and palette.
 `deliver_resources` delivers a verified bundle, not a displayed frame or launched
 app. Native packing/encoding is adapter-specific; inspect the display API.
@@ -31,7 +31,8 @@ of type `application` or `system`. They may alternate, with no fixed count:
 ```json
 {"format":"wishos-result/2","actions":[
  {"type":"application","recipient":"origin","topic":"prepared","data":{},"wait":"processed"},
- {"type":"system","path":"/sys/apps","method":"install","args":{"manifest":{"$asset":"app.json"}}},
+ {"type":"system","path":"/sys/apps","method":"validate","args":{"manifest":{"$asset":"app.json"},"package":{"$asset":"package.json"}}},
+ {"type":"system","path":"/sys/apps","method":"install","args":{"manifest":{"$asset":"app.json"},"package":{"$asset":"package.json"},"validation_id":{"$previous":"operation_id"},"expected_revision":{"$previous":"revision"}}},
  {"type":"system","path":"/sys/apps","method":"launch","args":{"id":{"$previous":"application_id"}}},
  {"type":"application","recipient":"foreground","topic":"open","data":{}}
 ],"files":[{"path":"app.json","artifact_id":"completed-staging-id"}]}

@@ -3,6 +3,8 @@ export type ResourceJob = {
   fingerprint: string;
   kind: string;
   state: 'queued' | 'running' | 'completed' | 'failed' | 'unknown';
+  diagnostics?: unknown[];
+  receipts?: Record<string, unknown>;
   created: number;
   updated: number;
   result?: unknown;
@@ -66,8 +68,15 @@ export class ResourceJobs {
         },
         (error) => {
           // A cancelled delivery might already have committed. Preserve uncertainty.
-          job.state = kind === 'deliver' ? 'unknown' : 'failed';
+          job.state =
+            kind === 'deliver' && !(error instanceof Error && error.name === 'PreflightError')
+              ? 'unknown'
+              : 'failed';
           job.error = error instanceof Error ? error.message : 'resource_job_failed';
+          if (error?.diagnostics) job.diagnostics = error.diagnostics;
+          if (error?.receipts) job.receipts = error.receipts;
+          if (error instanceof Error && error.name === 'PackageOutcomeUnknown')
+            job.state = 'unknown';
         },
       )
       .then(() => {

@@ -18,7 +18,7 @@ export type ManagedResult = {
   operation_id?: string;
   actions?: Action[];
   sequence?: { path: string; format: 'jsonl' };
-  files?: { path: string; artifact_id: string }[];
+  files?: { path: string; artifact_id: string; kind?: 'json' | 'lua' | 'asset' }[];
   transfer_id?: number;
 };
 const object = (value: unknown): value is Record<string, unknown> =>
@@ -29,6 +29,7 @@ export function relativeResource(value: unknown): value is string {
     Boolean(value) &&
     !value.startsWith('/') &&
     !value.includes('\\') &&
+    !/[\x00-\x1f\x7f]/.test(value) &&
     posix.normalize(value) === value &&
     !value.split('/').includes('..') &&
     value !== '.'
@@ -112,9 +113,10 @@ export function parseManagedResult(raw: string): ManagedResult {
       files.some(
         (f) =>
           !object(f) ||
-          Object.keys(f).some((k) => !['path', 'artifact_id'].includes(k)) ||
+          Object.keys(f).some((k) => !['path', 'artifact_id', 'kind'].includes(k)) ||
           !relativeResource(f.path) ||
-          typeof f.artifact_id !== 'string',
+          typeof f.artifact_id !== 'string' ||
+          (f.kind !== undefined && !['json', 'lua', 'asset'].includes(String(f.kind))),
       ))
   )
     throw Error('managed_files');

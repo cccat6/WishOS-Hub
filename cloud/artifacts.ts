@@ -9,7 +9,7 @@ export class CloudArtifacts implements BundleSource {
   readonly maxFile = 16 * 1024 * 1024;
   readonly maxRoom = 64 * 1024 * 1024;
   private reservations = 0;
-  private leased = new Set<string>();
+  private leased = new Map<string, number>();
   constructor(private sql: SqlStorage) {
     sql.exec(
       'CREATE TABLE IF NOT EXISTS artifacts(id TEXT PRIMARY KEY,size INTEGER,sha256 TEXT,created INTEGER,state TEXT);CREATE TABLE IF NOT EXISTS artifact_chunks(id TEXT,part INTEGER,start INTEGER,data BLOB,PRIMARY KEY(id,part));',
@@ -36,13 +36,11 @@ export class CloudArtifacts implements BundleSource {
         id: string;
         size: number;
         sha256: string;
-      }>(
-        "SELECT id,size,sha256 FROM artifacts WHERE id=? AND state='ready' AND created>?",
-        id,
-        Date.now() - 3600000,
-      )
+        created: number;
+      }>("SELECT id,size,sha256,created FROM artifacts WHERE id=? AND state='ready'", id)
       .toArray()[0];
-    if (!row) throw Error('artifact_not_found_or_expired');
+    if (!row || (row.created <= Date.now() - 3600000 && !this.leased.has(id)))
+      throw Error('artifact_not_found_or_expired');
     return { ...row, path: row.id };
   }
   async stage(input: { text?: string; url?: string; limit_bytes?: number }, signal: AbortSignal) {
@@ -123,9 +121,24 @@ export class CloudArtifacts implements BundleSource {
       this.reservations -= limit;
     }
   }
+  private unpin(id: string) {
+    const n = this.leased.get(id) ?? 1;
+    if (n <= 1) this.leased.delete(id);
+    else this.leased.set(id, n - 1);
+  }
+  pin(artifacts: BundleArtifact[]) {
+    const ids = [...new Set(artifacts.map((a) => a.id))];
+    for (const id of ids) this.get(id);
+    for (const id of ids) {
+      this.leased.set(id, (this.leased.get(id) ?? 0) + 1);
+    }
+    return () => {
+      for (const id of ids) this.unpin(id);
+    };
+  }
   async open(artifact: BundleArtifact) {
     this.get(artifact.id);
-    this.leased.add(artifact.id);
+    this.leased.set(artifact.id, (this.leased.get(artifact.id) ?? 0) + 1);
     // Demand-driven pages: no whole-resource allocation, regardless of network chunk layout.
     return {
       read: async (buffer: Uint8Array, offset: number, length: number, position: number) => {
@@ -153,7 +166,7 @@ export class CloudArtifacts implements BundleSource {
         return { bytesRead: written };
       },
       close: async () => {
-        this.leased.delete(artifact.id);
+        this.unpin(artifact.id);
       },
     };
   }

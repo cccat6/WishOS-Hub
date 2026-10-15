@@ -1,3 +1,5 @@
+import { nodeLuaCompiler } from './node-lua-compiler.js';
+import { preflightBundle, type PreflightOptions } from './preflight.js';
 import { deliverBundle } from './bundle-transfer.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, stat, unlink } from 'node:fs/promises';
@@ -187,39 +189,58 @@ export class ArtifactStore {
       this.db.prepare('DELETE FROM os_artifact_pending WHERE id=?').run(id);
     }
   }
+  pin(artifacts: { id: string }[]) {
+    const ids = [...new Set(artifacts.map((a) => a.id))];
+    for (const id of ids) this.leases.set(id, (this.leases.get(id) ?? 0) + 1);
+    return () => {
+      for (const id of ids) this.unpin(id);
+    };
+  }
+  private unpin(id: string) {
+    const n = this.leases.get(id) ?? 1;
+    if (n <= 1) this.leases.delete(id);
+    else this.leases.set(id, n - 1);
+  }
+  async open(item: { id: string; path: string; size: number }) {
+    this.leases.set(item.id, (this.leases.get(item.id) ?? 0) + 1);
+    let file;
+    try {
+      file = await open(item.path, 'r');
+      if ((await file.stat()).size !== item.size) throw Error('artifact_changed');
+    } catch (e) {
+      await file?.close();
+      this.unpin(item.id);
+      throw e;
+    }
+    return {
+      read: (buffer: Uint8Array, offset: number, length: number, position: number) =>
+        file.read(buffer, offset, length, position),
+      close: async () => {
+        try {
+          await file.close();
+        } finally {
+          this.unpin(item.id);
+        }
+      },
+    };
+  }
+  preflight(
+    files: { path: string; artifact_id: string }[],
+    options: Omit<PreflightOptions, 'compiler'>,
+  ) {
+    return preflightBundle(this, files, { ...options, compiler: nodeLuaCompiler });
+  }
   async deliver(
     transport: DeviceRpc,
     files: { path: string; artifact_id: string }[],
     signal: AbortSignal,
     expectedBoot?: string,
     remoteRequestId?: number,
+    controlFiles?: string[],
   ) {
-    return deliverBundle(transport, files, signal, expectedBoot, remoteRequestId, {
-      get: (id) => this.get(id),
-      open: async (item) => {
-        this.leases.set(item.id, (this.leases.get(item.id) ?? 0) + 1);
-        let file;
-        try {
-          file = await open(item.path, 'r');
-        } catch (e) {
-          this.leases.delete(item.id);
-          throw e;
-        }
-        if ((await file.stat()).size !== item.size) {
-          await file.close();
-          this.leases.delete(item.id);
-          throw Error('artifact_changed');
-        }
-        return {
-          read: (buffer, offset, length, position) => file.read(buffer, offset, length, position),
-          close: async () => {
-            await file.close();
-            const n = this.leases.get(item.id) ?? 1;
-            if (n <= 1) this.leases.delete(item.id);
-            else this.leases.set(item.id, n - 1);
-          },
-        };
-      },
+    return deliverBundle(transport, files, signal, expectedBoot, remoteRequestId, this, {
+      compiler: nodeLuaCompiler,
+      controlFiles,
     });
   }
 }

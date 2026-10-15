@@ -1,3 +1,9 @@
+import { ResourceJobs } from './resource-jobs.js';
+import { HostJobStore } from './connect/job-store.js';
+import { canonicalValue } from './control-receipts.js';
+import { packageJobKinds, runPackageJob } from './package-jobs.js';
+import { nodeLuaCompiler } from './node-lua-compiler.js';
+import { guardedInvocation } from './preflight-call.js';
 import { prepareImage } from './connect/image.js';
 import { TransportFailure } from './transport-failure.js';
 import { ArtifactStore } from './os-artifacts.js';
@@ -44,10 +50,11 @@ export interface HubOptions {
   speechConfigurationOwner?: 'hub' | 'connector';
   audioLimits?: Partial<typeof AudioLimits>;
   artifactRoot?: string;
-  artifactPolicy?: {maxStoredBytes:number;ttlMs:number};
+  artifactPolicy?: { maxStoredBytes: number; ttlMs: number };
   artifactMaxBytes?: number;
   allowPowerCommands?: boolean;
   discoveryToken?: string;
+  resourceJobs?: ResourceJobs;
 }
 interface VoiceLane {
   pending: number;
@@ -137,6 +144,52 @@ export class Hub {
   >();
   private osAudio: OsAudioIngress;
   private artifacts: ArtifactStore;
+  readonly resourceJobs: ResourceJobs;
+  submitResourceJob(value: any) {
+    if (
+      !value ||
+      !['stage', 'image', 'deliver', ...packageJobKinds].includes(value.kind) ||
+      !value.input ||
+      typeof value.input !== 'object' ||
+      Array.isArray(value.input)
+    )
+      throw new HttpError(400, 'resource_job_request');
+    if (value.input.device_id && !this.devices.has(value.input.device_id))
+      throw new HttpError(404, 'device_not_found');
+    if (
+      value.kind === 'deliver' &&
+      (typeof value.input.device_id !== 'string' ||
+        typeof value.input.expected_boot_id !== 'string' ||
+        !Array.isArray(value.input.files))
+    )
+      throw new HttpError(400, 'resource_delivery_request');
+    const id = value.request_id ?? randomUUID();
+    if (typeof id !== 'string' || !id.match(/^[A-Za-z0-9_.:-]{1,128}$/))
+      throw new HttpError(400, 'resource_job_identity');
+    const fingerprint = createHash('sha256')
+      .update(canonicalValue({ kind: value.kind, input: value.input }))
+      .digest('hex');
+    return this.resourceJobs.submit(id, fingerprint, value.kind, (signal) =>
+      value.kind === 'stage'
+        ? this.stageResource(value.input, signal)
+        : value.kind === 'image'
+          ? this.prepareImage(value.input, signal)
+          : value.kind === 'deliver'
+            ? this.deliverResources(
+                value.input.device_id,
+                value.input.files,
+                signal,
+                value.input.expected_boot_id,
+              )
+            : runPackageJob(value.kind, value.input, {
+                source: this.artifacts,
+                stage: (text, signal) => this.artifacts.stage({ text }, signal),
+                compiler: nodeLuaCompiler,
+                rpc: (id) => (path, method, args) => this.invokeDevice(id, path, method, args),
+                signal,
+              }),
+    );
+  }
   stageResource(input: any, signal: AbortSignal) {
     return this.artifacts.stage(input, signal);
   }
@@ -193,6 +246,8 @@ export class Hub {
     void p.finally(() => this.tasks.delete(p)).catch(() => {});
   }
   constructor(private options: HubOptions) {
+    this.resourceJobs =
+      options.resourceJobs ?? new ResourceJobs(new HostJobStore(options.store.db));
     this.artifacts = new ArtifactStore(
       options.store.db,
       options.artifactRoot ?? 'data/wishos-assets',
@@ -277,7 +332,15 @@ export class Hub {
   invokeDevice(id: string, path: string, method: string, args: Record<string, unknown>) {
     const peer = this.osPeers.get(id);
     if (!peer) throw new TransportFailure('device_disconnected', false);
-    return peer.rpc(path, method, args);
+    return guardedInvocation(
+      peer.rpc,
+      nodeLuaCompiler,
+      path,
+      method,
+      args,
+      this.serviceAbort.signal,
+      peer.boot,
+    );
   }
   configureDevice(device: DeviceConfig) {
     if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(device.id) || device.token.length > 96)
@@ -292,6 +355,7 @@ export class Hub {
   }
   hasActiveWork() {
     return (
+      this.resourceJobs.list().some((job) => job.state === 'running') ||
       this.busy.size > 0 ||
       [...this.devices.keys()].some((id) => this.agentBusy(id)) ||
       [...this.osPeers.values()].some((peer) => peer.bridge.pendingCount > 0)
@@ -1340,6 +1404,33 @@ export class Hub {
       if (u.pathname !== '/api/speech' || !sameOrigin)
         throw new HttpError(403, 'browser origins not enabled');
     }
+    if (u.pathname === '/api/service' && req.method === 'GET')
+      return reply(res, 200, {
+        format: 'wishos-hub/1',
+        deployment: 'user-host',
+        resources: {
+          imagePreparation: true,
+          staging: true,
+          delivery: true,
+          packagePreflight: true,
+        },
+        session_owner: 'selected-runtime',
+        direct_model_api: false,
+      });
+    if (u.pathname === '/api/os/jobs' && req.method === 'POST')
+      return reply(res, 202, this.submitResourceJob(await body(req)));
+    if (
+      ['/api/os/jobs/read', '/api/os/jobs/cancel'].includes(u.pathname) &&
+      req.method === 'POST'
+    ) {
+      const { id } = await body(req);
+      if (typeof id !== 'string') throw new HttpError(400, 'resource_job_identity');
+      return reply(
+        res,
+        200,
+        u.pathname.endsWith('/read') ? this.resourceJobs.read(id) : this.resourceJobs.cancel(id),
+      );
+    }
     if (u.pathname === '/api/os/artifacts/upload' && req.method === 'POST') {
       if (req.headers['content-type']?.split(';')[0] !== 'application/octet-stream')
         throw new HttpError(415, 'application/octet-stream required');
@@ -1363,7 +1454,7 @@ export class Hub {
           (!request.args || typeof request.args !== 'object' || Array.isArray(request.args)))
       )
         throw new HttpError(400, 'rpc_request');
-      const result = await peer.rpc(request.path, request.method, {
+      const result = await this.invokeDevice(osMatch[1]!, request.path, request.method, {
         ...(request.args ?? {}),
         ...(request.expected_boot_id ? { expected_boot_id: request.expected_boot_id } : {}),
       });
@@ -1538,6 +1629,7 @@ export class Hub {
   async close() {
     this.stopping = true;
     this.serviceAbort.abort();
+    if (!this.options.resourceJobs) await this.resourceJobs.close();
     this.speechAbort.abort();
     clearInterval(this.timer);
     for (const peer of this.osPeers.values()) {

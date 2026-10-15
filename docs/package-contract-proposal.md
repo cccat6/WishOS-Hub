@@ -92,3 +92,102 @@ tools), actual Lua parser fixtures including Lua-5.4 syntax, all delivery routes
 malformed/oversize/missing reference packages, boot/config changes and no-write
 assertions. Local and cloud checks use simulated sockets in Hub; the terminal
 owner alone performs real C3 tests and leaves E6 untouched.
+
+## Confirmed implementation follow-up
+
+The terminal owner has supplied `WishOS/docs/package-contract.md`; that document
+now owns the header/inventory, native validation and copy/install contract. Hub
+uses it rather than inventing an independent format. Managed action sequences
+explicitly request validate → install with validation/revision references → launch;
+Hub never inserts steps into a user's ordered sequence or redirects $previous.
+
+Lua parser: built stock **Lua 5.4.8**, source archive SHA-256
+`4f18ddae154e793e46eeab727c59ef1c0c0c2b744e7b94219710d76f530629ae`, with
+Emscripten 3.1.74 in build `38784325111`. The resulting portable compile-only WASM
+has SHA-256 `5cd5812dd8ffa0ef03a93e5d6f97b5af4648272790ab2cd6b36240533154439b`.
+Node and Workers use the same module; no user chunk is called and no libraries,
+filesystem, process or network interfaces are opened for it. Wasmoon was used
+only to investigate the ABI; its older Lua binary is not the shipped parser.
+
+Stable reuse CLI after `npm run build`, requiring Node but no model/credentials:
+
+```sh
+printf '%s' '{"files":[{"path":"app.lua","source":"local x <const> = 1; return x"}]}' | node hub/scripts/check-lua.mjs
+```
+
+The script path above is relative to the parent workspace; from Hub use
+`scripts/check-lua.mjs`. It reads one stdin JSON document and writes one stdout
+`wishos-lua-check/1` document. `files:[{path,source}]` is the batch form;
+`{source,name?}` is accepted for one file. Valid protocol with syntax rejection
+returns exit 0 and `ok:false`; malformed/envelope-too-large input returns exit 2.
+Diagnostics include actual parser version, filename and Lua-reported line/error.
+The input envelope is bounded to 1 MiB as a host-tool policy, not a device limit.
+The importable API is `dist/node-lua-compiler.js: nodeLuaCompiler()`, returning
+`check(source,name)`. The core constructor is `compilerFromModule` for Workers.
+
+Authoritative OS references are vendored from git objects at an explicit commit,
+not copied from another agent's uncommitted files. Initial snapshot is
+`d26ce10518b8fbede720dcf4a5fd59a9a9a415f4`; each file has its source path and
+SHA-256 in `vendor/os-reference/snapshot.json`. The sync command is
+`node scripts/sync-os-reference.mjs .. <full OS commit>`. The final snapshot will
+be updated to the terminal owner's committed package/component contract before
+integration completion. MCP serves these references alongside layer skills.
+
+## Integration status — 2026-10-16
+
+Terminal owner reported real C3 validation of component discovery, package
+validation/install/launch, active-revision protection and invalid-Lua rejection
+without replacing the old catalog/VM. Native copy_file on actual Flash caused a
+restart and is under investigation by the terminal owner. Hub copy/update tests
+remain host/transport validation only; no release or physical-pass claim for this
+path until the terminal owner reports the repaired real-device result.
+
+For updates, unchanged Lua/JSON control sources are read upstream for complete
+preflight. Unchanged large binary assets are not downloaded to hash on the host;
+the native local-copy operation must verify their expected digest. Preflight
+reports this pending native check. User books and recording history stay outside
+immutable app revisions. Changed download bytes, control-source upload/read bytes
+and native copy bytes are distinct measurements.
+
+Metadata follow-up for the terminal: Applications::document still enforces a
+4096-byte manifest ceiling, but describe currently exposes only the package JSON
+ceiling. Please advertise manifest_limit_bytes from the owning implementation so
+Hub can check the exact target limit without hardcoding a C3/board constant.
+
+Terminal follow-up: native copy_file cause was identified as recursive transfer
+invoke stack use; the terminal owner refactored the shared file/status functions
+and reports seven real C3 native scenarios passing after the fix, including
+114KB local copying and restart/catalog recovery. Hub-to-device integration has
+not yet been rerun by this task; these remain terminal-side native results.
+
+UI preflight checks declared vocabulary and structure. It deliberately does not
+require a font alias to be registered by an application that has not run yet.
+Native schema_only validation and actual render readiness are separate stages.
+
+Inventory control/data classification: Hub now carries optional per-file kind
+`json`, `lua` or `asset` through MCP staging references and sorted inventories.
+Known application descriptor is explicitly json. `.lua` remains compilable text
+even if mislabeled asset. Explicit asset JSON is streamed/hashed without whole
+JSON parsing; untyped non-package data is not rejected merely for its extension
+or size. Package control JSON follows target bounds; managed action JSONL is
+line-streamed separately from package payloads. This awaits the corresponding
+committed native optional-kind contract before final integration.
+
+Native Lua profile is now built in CI 38789794519 from Hub commit
+90facc2c089fad3a90d42b6e2ec7d6c52d47bc1b with LUAI_MAXCCALLS=32. WASM
+SHA-256 `4ef17b40be73c13897ec698ca15fca9656d1aa1042d877ba855054eb9b0d05dc` supersedes the initial stock-profile module above. The
+compiler exports this profile and host/Workers compare a declared target profile;
+a mismatch rejects before executable delivery rather than claiming compatibility.
+This is the current supported native parser profile, not a universal RAM limit.
+
+Hub behavior checks now cover real MCP tools on both local HTTP and local Workers
+with paired WebSocket devices: preparation before writes, native package tickets,
+install/activation, whole-file update/local copy and live device component index.
+Install-success/activation-refusal retains the committed catalog revision and
+installation/activation receipts while the old VM remains; it is not reported as
+an all-or-nothing rollback and launch is never silently retried.
+
+The current preflight honors manifest_limit_bytes when advertised and separately
+checks the compiler's native_call_depth_limit profile. Inventory kinds require
+target-advertised file_kinds before package writes. Final pinned OS reference
+refresh awaits the committed schema_only/kind/profile/transfer fixes.

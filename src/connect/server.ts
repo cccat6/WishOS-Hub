@@ -279,6 +279,7 @@ export class ConnectorServer {
         adapter: d.runtimeId ? adapters.get(d.runtimeId)! : new UnboundRuntime(),
       }));
       candidate = new Hub({
+        resourceJobs: this.jobs!,
         devices,
         adminToken: this.internalToken,
         store: this.store!,
@@ -348,6 +349,7 @@ export class ConnectorServer {
           resources: {
             ...this.config.resources,
             imagePreparation: true,
+            packagePreflight: true,
             formats: ['png', 'rgb8', 'indexed8'],
           },
           session_owner: 'selected-runtime',
@@ -359,39 +361,7 @@ export class ConnectorServer {
         return path.endsWith('/read') ? this.jobs!.read(id) : this.jobs!.cancel(id);
       }
       if (path === '/api/os/jobs') {
-        const v = payload as any;
-        if (
-          !v ||
-          !['stage', 'image', 'deliver'].includes(v.kind) ||
-          !v.input ||
-          typeof v.input !== 'object'
-        )
-          throw new ApiError(400, 'resource_job_request');
-        if (
-          v.kind === 'deliver' &&
-          (!this.config.devices.some((d) => d.id === v.input.device_id) ||
-            typeof v.input.expected_boot_id !== 'string' ||
-            !Array.isArray(v.input.files))
-        )
-          throw new ApiError(400, 'resource_delivery_request');
-        const id = v.request_id ?? randomUUID();
-        if (typeof id !== 'string' || !id.match(/^[A-Za-z0-9_.:-]{1,128}$/))
-          throw new ApiError(400, 'resource_job_identity');
-        const fingerprint = createHash('sha256')
-          .update(canonicalValue({ kind: v.kind, input: v.input }))
-          .digest('hex');
-        return this.jobs!.submit(id, fingerprint, v.kind, (signal) =>
-          v.kind === 'stage'
-            ? this.hub!.stageResource(v.input, signal)
-            : v.kind === 'image'
-              ? this.hub!.prepareImage(v.input, signal)
-              : this.hub!.deliverResources(
-                  v.input.device_id,
-                  v.input.files,
-                  signal,
-                  v.input.expected_boot_id,
-                ),
-        );
+        return this.hub!.submitResourceJob(payload);
       }
       if (path === '/api/os/receipts/read') {
         const input = payload as any;

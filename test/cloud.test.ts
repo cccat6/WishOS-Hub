@@ -485,3 +485,159 @@ test('cloud MCP follows authenticated connector to a LAN device and retains muta
     });
   }
 });
+
+test('cloud MCP executes the portable Lua WASM parser and rejects bad code before relay delivery', async () => {
+  const a = await installation(),
+    client = await connectMcp(await access(a.owner_token)),
+    device = new WireDevice();
+  device.descriptions['/sys/runtime'] = {
+    methods: 'read,load,validate',
+    read_methods: 'read',
+    engine: 'lua-5.4.8',
+    entry_source_limit_bytes: 4096,
+  };
+  device.resourceHandler = (c) => (c.path === '/sys/runtime' ? { source_limit_bytes: 4096 } : {});
+  const call = async (name: string, args: any) => {
+    const r: any = await client.callTool({ name, arguments: args });
+    assert(!r.isError, JSON.stringify(r));
+    return JSON.parse(r.content[0].text);
+  };
+  const finish = async (id: string) =>
+    eventually(async () => {
+      const job = await call('read_resource_job', { id });
+      return job.state !== 'running' ? job : false;
+    });
+  try {
+    const profile = await request('/v1/devices', { id: 'device', label: 'Device' }, a.owner_token);
+    await device.connect(base.replace('http:', 'ws:') + '/os/device?id=device', profile.body.token);
+    assert(
+      (await client.listResources()).resources.some(
+        (r) => r.uri === 'wishos://guidance/components',
+      ),
+    );
+    for (const [source, valid] of [
+      ['local x <const> = 1; return x', true],
+      ['local = 1', false],
+    ] as const) {
+      const artifact = (await finish((await call('stage_resource', { text: source })).id)).result;
+      const job = await finish(
+        (
+          await call('preflight_bundle', {
+            device_id: 'device',
+            expected_boot_id: device.boot,
+            files: [{ path: 'main.lua', artifact_id: artifact.id }],
+          })
+        ).id,
+      );
+      assert.equal(job.state, valid ? 'completed' : 'failed', JSON.stringify(job));
+      if (valid) assert.equal(job.result.lua.parser, 'Lua 5.4.8');
+      else assert.equal(job.diagnostics[0].code, 'lua_syntax');
+    }
+    const rejected: any = await client.callTool({
+      name: 'invoke_resource',
+      arguments: {
+        device_id: 'device',
+        path: '/sys/runtime',
+        method: 'load',
+        args: { source: 'return {' },
+        expected_boot_id: device.boot,
+        request_id: 'bad-cloud-load',
+      },
+    });
+    assert.equal(rejected.isError, true);
+    assert.equal(JSON.parse(rejected.content[0].text).result.not_dispatched, true);
+    assert(!device.calls.some((c) => ['begin', 'mounts', 'load'].includes(c.method)));
+  } finally {
+    await client.close();
+    await device.close();
+    await fetch(base + '/v1/installations', {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer ' + a.owner_token },
+    });
+  }
+});
+
+test('cloud MCP package tools deliver, await native admission and update whole files over relay', async () => {
+  const { PackageDevice } = await import('./fixtures/package-device.js');
+  const a = await installation(),
+    client = await connectMcp(await access(a.owner_token)),
+    wire = new WireDevice(),
+    native = new PackageDevice();
+  native.boot = wire.boot;
+  wire.descriptions = native.descriptions;
+  wire.resourceHandler = (c) => native.call(c);
+  const call = async (name: string, args: any) => {
+    const r: any = await client.callTool({ name, arguments: args });
+    assert(!r.isError, JSON.stringify(r));
+    return JSON.parse(r.content[0].text);
+  };
+  const finish = async (id: string) =>
+    eventually(async () => {
+      const job = await call('read_resource_job', { id });
+      if (['failed', 'unknown'].includes(job.state)) throw Error(JSON.stringify(job));
+      return job.state === 'completed' ? job.result : false;
+    }, 20000);
+  const stage = async (path: string, text: string) => ({
+    path,
+    artifact_id: (await finish((await call('stage_resource', { text })).id)).id,
+  });
+  try {
+    const profile = await request('/v1/devices', { id: 'device', label: 'Device' }, a.owner_token);
+    await wire.connect(base.replace('http:', 'ws:') + '/os/device?id=device', profile.body.token);
+    const files = [
+      await stage(
+        'app.json',
+        JSON.stringify({
+          format: 'wishos-app/1',
+          id: 'relay-app',
+          title: 'Relay',
+          entry: 'main.lua',
+        }),
+      ),
+      await stage('main.lua', 'return {version=1}'),
+      await stage('small.bin', 'a resource'),
+    ];
+    const prepared = await finish(
+      (await call('prepare_package', { device_id: 'device', expected_boot_id: wire.boot, files }))
+        .id,
+    );
+    assert(!native.calls.some((c) => c.method === 'begin'));
+    const deployed = await finish(
+      (
+        await call('deploy_package', {
+          device_id: 'device',
+          expected_boot_id: wire.boot,
+          files: prepared.files,
+          activate: true,
+        })
+      ).id,
+    );
+    assert.equal(deployed.state, 'activated');
+    assert.equal(native.active, 'relay-app');
+    assert.equal(native.revision, 1);
+    const changed = await stage('main.lua', 'return {version=2}');
+    const update = await finish(
+      (
+        await call('update_package', {
+          device_id: 'device',
+          expected_boot_id: wire.boot,
+          application_id: 'relay-app',
+          expected_revision: 1,
+          replacements: [changed],
+        })
+      ).id,
+    );
+    assert.equal(update.state, 'installed');
+    assert.equal(native.revision, 2);
+    assert(update.copied_files.includes('small.bin'));
+    assert.equal(native.files.get('/card/revisions/2/main.lua')!.toString(), 'return {version=2}');
+    assert.equal(native.ticket, undefined);
+  } finally {
+    await client.close();
+    await wire.close();
+    await fetch(base + '/v1/installations', {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer ' + a.owner_token },
+    });
+  }
+});

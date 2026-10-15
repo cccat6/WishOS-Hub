@@ -132,3 +132,32 @@ Python is a test/legacy-renderer dependency, not a requirement of the released
 connector. Firmware and physical-device tests live in the terminal repository.
 Host fixtures verify protocol and fault behavior, not live vendor authorization
 or physical panel output. See [validation](docs/validation.md).
+
+### Runtime package preparation
+
+MCP exposes component/skill resources at `wishos://guidance/components`, a
+`wishos-authoring` prompt and the `get_guidance` fallback tool. Device-selected
+components come from `get_device_components` and live capability discovery; a
+static guide does not imply that a peripheral exists. References are bundled from
+a pinned WishOS git commit with per-file digests.
+
+`prepare_package` constructs a complete sorted inventory, `preflight_bundle`
+checks it without device writes, `deploy_package` delivers and awaits native
+validation/install, and `update_package` makes immutable whole-file revisions.
+All are jobs observed through `read_resource_job`. Source errors are returned with
+file/line diagnostics from the stock Lua 5.4.8 compile-only WASM parser; no Lua
+application is executed by preflight. Host and Workers use the same compiler
+profile and compare declared target limits.
+
+Inventory kind is optional: `lua`, `json` or `asset`. Lua stays code regardless of
+an asset label. Known controls are parsed; large JSON data explicitly marked
+asset remains a streamed/hash-checked resource. Schema-only UI validation accepts
+future runtime font bindings; actual native rendering and allocation admission
+remain separate. Ordinary media storage is not application installation.
+
+Updates send complete changed files and copy unchanged assets locally. Complete
+preflight still reads unchanged Lua/JSON controls from the device; it does not
+read large unchanged binary assets back to the host. Native copying verifies
+their expected digest. Books/history stay outside app revisions. Old revisions
+remain until explicit removal and never receive line patches. A lost mutation
+reply requires receipt reconciliation rather than blind re-execution.

@@ -10,5 +10,5 @@
     "types": ["./worker-configuration.d.ts", "node"],
     "allowSyntheticDefaultImports": true
   },
-  "include": ["./**/*.ts"]
+  "include": ["./**/*.ts", "../src/luaparse.d.ts"]
 }

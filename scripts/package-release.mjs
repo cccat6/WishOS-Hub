@@ -17,6 +17,7 @@ for (const file of [
   'README.md',
   'docs',
   'skills',
+  'vendor',
 ])
   await cp(file, join(root, file), { recursive: true });
 execFileSync(

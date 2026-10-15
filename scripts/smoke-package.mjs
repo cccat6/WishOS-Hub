@@ -1,9 +1,20 @@
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { join, resolve } from 'node:path';
 import assert from 'node:assert/strict';
 export async function smokePackage(root) {
+  const parserUrl = pathToFileURL(join(root, 'dist/node-lua-compiler.js')).href;
+  execFileSync(
+    join(root, 'runtime', process.platform === 'win32' ? 'node.exe' : 'node'),
+    [
+      '--input-type=module',
+      '-e',
+      `const {nodeLuaCompiler}=await import(${JSON.stringify(parserUrl)});const compiler=await nodeLuaCompiler();if(!compiler.check('local x <const> = 1; return x','ok.lua').ok||compiler.check('return {','bad.lua').ok)throw Error('packaged_lua_parser');`,
+    ],
+    { cwd: tmpdir(), stdio: 'inherit' },
+  );
   const data = await mkdtemp(join(tmpdir(), 'wishos-package-'));
   const child = spawn(
     join(root, 'runtime', process.platform === 'win32' ? 'node.exe' : 'node'),
@@ -81,7 +92,7 @@ export async function smokePackage(root) {
         arch: process.arch,
         external_cwd: true,
         python_required: false,
-        checks: ['bundled-runtime', 'http', 'wizard', 'authenticated-mcp'],
+        checks: ['bundled-runtime', 'http', 'wizard', 'authenticated-mcp', 'stock-lua-wasm'],
       }),
     );
     execFileSync(

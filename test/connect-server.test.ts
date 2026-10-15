@@ -145,3 +145,179 @@ test('a failed competing startup cannot remove the running connector lock', asyn
     await f.close();
   }
 });
+
+test('local MCP exposes guidance and runs actual Lua preflight before a wire mutation', async () => {
+  const { Client, StreamableHTTPClientTransport } = await import('@modelcontextprotocol/client');
+  const f = await fixture(),
+    device = new WireDevice(),
+    client = new Client({ name: 'preflight-local', version: '1' });
+  device.descriptions['/sys/runtime'] = {
+    methods: 'read,load,validate',
+    read_methods: 'read',
+    engine: 'lua-5.4.8',
+    entry_source_limit_bytes: 4096,
+  };
+  device.resourceHandler = (c) =>
+    c.path === '/sys/runtime' && c.method === 'read' ? { source_limit_bytes: 4096 } : {};
+  try {
+    await device.connect(
+      'ws://127.0.0.1:' + f.port + '/os/device?id=device',
+      f.config.devices[0]!.token,
+    );
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(f.url + '/mcp'), {
+        requestInit: { headers: { Authorization: 'Bearer ' + f.config.localToken } },
+      }),
+    );
+    const guide: any = await client.callTool({
+      name: 'get_guidance',
+      arguments: { component_id: 'index' },
+    });
+    assert(!guide.isError);
+    assert(guide.content.some((c: any) => c.type === 'resource_link'));
+    const invalid: any = await client.callTool({
+      name: 'invoke_resource',
+      arguments: {
+        device_id: 'device',
+        path: '/sys/runtime',
+        method: 'load',
+        args: { source: 'return {' },
+        expected_boot_id: device.boot,
+        request_id: 'bad-load',
+      },
+    });
+    assert.equal(invalid.isError, true);
+    const rejected = JSON.parse(invalid.content[0].text);
+    assert.equal(rejected.result.not_dispatched, true);
+    assert(!device.calls.some((c) => c.method === 'load'));
+    const staged: any = await client.callTool({
+      name: 'stage_resource',
+      arguments: { text: 'local a <const> = 1; return a' },
+    });
+    const id = JSON.parse(staged.content[0].text).id;
+    const asset = await eventually(async () => {
+      const r: any = await client.callTool({ name: 'read_resource_job', arguments: { id } });
+      const j = JSON.parse(r.content[0].text);
+      return j.state === 'completed' ? j.result : false;
+    });
+    const checked: any = await client.callTool({
+      name: 'preflight_bundle',
+      arguments: {
+        files: [{ path: 'test.lua', artifact_id: asset.id }],
+        device_id: 'device',
+        expected_boot_id: device.boot,
+      },
+    });
+    const checkId = JSON.parse(checked.content[0].text).id;
+    const report = await eventually(async () => {
+      const r: any = await client.callTool({
+        name: 'read_resource_job',
+        arguments: { id: checkId },
+      });
+      const j = JSON.parse(r.content[0].text);
+      if (j.state === 'failed') throw Error(JSON.stringify(j));
+      return j.state === 'completed' ? j.result : false;
+    });
+    assert.equal(report.lua.parser, 'Lua 5.4.8');
+    assert(!device.calls.some((c) => ['begin', 'load', 'mounts'].includes(c.method)));
+  } finally {
+    await client.close();
+    await device.close();
+    await f.close();
+  }
+});
+
+test('local MCP package admission and device-selected component discovery use the public transport', async () => {
+  const { Client, StreamableHTTPClientTransport } = await import('@modelcontextprotocol/client'),
+    { PackageDevice } = await import('./fixtures/package-device.js');
+  const f = await fixture(),
+    wire = new WireDevice(),
+    native = new PackageDevice(),
+    client = new Client({ name: 'package-local', version: '1' });
+  native.boot = wire.boot;
+  wire.descriptions = native.descriptions;
+  wire.board = {
+    component_index: { format: 'wishos-components/1', file: '/system/components.json' },
+  };
+  wire.resourceHandler = (c) => native.call(c);
+  native.files.set(
+    '/system/components.json',
+    Buffer.from(
+      JSON.stringify({
+        format: 'wishos-components/1',
+        components: [
+          {
+            id: 'custom-device',
+            layer: 'driver',
+            kind: 'device',
+            source: { repository: 'https://github.com/fixture/board', path: 'hardware' },
+          },
+        ],
+      }),
+    ),
+  );
+  const call = async (name: string, args: any) => {
+    const r: any = await client.callTool({ name, arguments: args });
+    assert(!r.isError, JSON.stringify(r));
+    return JSON.parse(r.content[0].text);
+  };
+  const finish = async (id: string) =>
+    eventually(async () => {
+      const job = await call('read_resource_job', { id });
+      if (['failed', 'unknown'].includes(job.state)) throw Error(JSON.stringify(job));
+      return job.state === 'completed' ? job.result : false;
+    });
+  const stage = async (path: string, text: string) => ({
+    path,
+    artifact_id: (await finish((await call('stage_resource', { text })).id)).id,
+  });
+  try {
+    await wire.connect(
+      'ws://127.0.0.1:' + f.port + '/os/device?id=device',
+      f.config.devices[0]!.token,
+    );
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(f.url + '/mcp'), {
+        requestInit: { headers: { Authorization: 'Bearer ' + f.config.localToken } },
+      }),
+    );
+    const index = await call('get_device_components', {
+      device_id: 'device',
+      expected_boot_id: wire.boot,
+    });
+    assert.equal(index.components[0].id, 'custom-device');
+    const files = [
+      await stage(
+        'app.json',
+        JSON.stringify({
+          format: 'wishos-app/1',
+          id: 'local-app',
+          title: 'Local',
+          entry: 'main.lua',
+        }),
+      ),
+      await stage('main.lua', 'return {}'),
+    ];
+    const p = await finish(
+      (await call('prepare_package', { device_id: 'device', expected_boot_id: wire.boot, files }))
+        .id,
+    );
+    const result = await finish(
+      (
+        await call('deploy_package', {
+          device_id: 'device',
+          expected_boot_id: wire.boot,
+          files: p.files,
+          activate: true,
+        })
+      ).id,
+    );
+    assert.equal(result.state, 'activated');
+    assert.equal(native.active, 'local-app');
+    assert.equal(native.ticket, undefined);
+  } finally {
+    await client.close();
+    await wire.close();
+    await f.close();
+  }
+});

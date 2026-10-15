@@ -1,0 +1,15 @@
+{
+  "format": "wishos-compiler/1",
+  "lua": "5.4.8",
+  "lua_source": "https://www.lua.org/ftp/lua-5.4.8.tar.gz",
+  "lua_source_sha256": "4f18ddae154e793e46eeab727c59ef1c0c0c2b744e7b94219710d76f530629ae",
+  "emscripten": "3.1.74",
+  "source_commit": "a2b79a09142deee1590b946cf78540a2c8ab3096",
+  "wasm_sha256": "4ef17b40be73c13897ec698ca15fca9656d1aa1042d877ba855054eb9b0d05dc",
+  "mode": "text compile only; no application execution",
+  "compiler_profile": {
+    "native_call_depth_limit": 32,
+    "lua_integer_bits": 64,
+    "lua_number_bits": 64
+  }
+}

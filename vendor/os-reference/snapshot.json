@@ -1,0 +1,77 @@
+{
+  "format": "wishos-source-snapshot/1",
+  "repository": "https://github.com/cccat6/WishOS",
+  "commit": "040bf8a63e1a511bdab08d94493b40940def9d6b",
+  "files": [
+    {
+      "id": "resource-model",
+      "path": "skills/agentic-notes-hardware/references/resource-model.md",
+      "sha256": "7c2f88ecb2c2ca6c24256f89f5d944b581ab6a555dad7ca07abe515c4703437b"
+    },
+    {
+      "id": "runtime-apps",
+      "path": "skills/agentic-notes-hardware/references/runtime-apps.md",
+      "sha256": "12ece5d6040d7b25ec8049a98df843416881ea4636e4cf45593bead0ca5ac461"
+    },
+    {
+      "id": "callbacks",
+      "path": "skills/agentic-notes-hardware/references/callbacks.md",
+      "sha256": "5177046f63bfb565e21c403e89423f1dd3beccc67c435b68477fe10ebdde3dcc"
+    },
+    {
+      "id": "applications",
+      "path": "skills/agentic-notes-hardware/references/applications.md",
+      "sha256": "b24e85defb1239d45d8113453cebe420a0ae07672da0bac4c4fd177f47d58e04"
+    },
+    {
+      "id": "dynamic-ui",
+      "path": "skills/agentic-notes-hardware/references/dynamic-ui.md",
+      "sha256": "0e53a64728209f4eecf41d2f74cb8265b0815c65f041932fff6027c1da0f8d03"
+    },
+    {
+      "id": "display-interface",
+      "path": "skills/agentic-notes-hardware/references/display-interface.md",
+      "sha256": "8bcd542b470096ad242e53567f4c1c7a3a92fd013924a69b6c366158d476b74d"
+    },
+    {
+      "id": "managed-services",
+      "path": "skills/agentic-notes-hardware/references/managed-services.md",
+      "sha256": "e4b5177d70ef2b96848d7366f7fe45828195abf186b6e849dfa4dbed04043614"
+    },
+    {
+      "id": "audio",
+      "path": "skills/agentic-notes-hardware/references/audio.md",
+      "sha256": "1039604885da64d07e3db03ce496f9e7a749af8e5dd4866229cf4556e2c0d18f"
+    },
+    {
+      "id": "interactions",
+      "path": "skills/agentic-notes-hardware/references/interactions.md",
+      "sha256": "b888fd10ddaf7be8f9c182b01d6495d1fd5a394198200e9119562fec4d33c5f3"
+    },
+    {
+      "id": "connectivity",
+      "path": "skills/agentic-notes-hardware/references/connectivity.md",
+      "sha256": "af4708784df72d903c4d4cf40ee9587a4c59c45ce67908ab4353021da8d5e4eb"
+    },
+    {
+      "id": "wireless-config",
+      "path": "skills/agentic-notes-hardware/references/wireless-config.md",
+      "sha256": "98f0aa44235b384b11671c2e04889195b2f410fde8d2084bf7e794f84605fc04"
+    },
+    {
+      "id": "nfs-service",
+      "path": "skills/agentic-notes-hardware/references/nfs-service.md",
+      "sha256": "d9b7e59c2cb7599032701a44d898374e5445f05884a6c1c1058c93e60bfb643b"
+    },
+    {
+      "id": "driver-guide",
+      "path": "skills/agentic-notes-hardware/references/driver-guide.md",
+      "sha256": "ff82868990d285ae4fed91063020095db76e437bd82e7464384f2214570d5c9f"
+    },
+    {
+      "id": "packages",
+      "path": "skills/agentic-notes-hardware/references/packages.md",
+      "sha256": "d418c846d5cb1a7fdf5eb603a8c20ea19115e7bdf5a9a8cc0bb843a6ef1cc84e"
+    }
+  ]
+}

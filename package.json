@@ -7,7 +7,7 @@
     "node": ">=24.22"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "npm run build:guidance && tsc -p tsconfig.json",
     "start": "node --use-env-proxy dist/connect/cli.js serve",
     "test": "npm run build && tsx --test --test-concurrency=1 test/*.test.ts",
     "simulate": "tsx tools/simulate.ts",
@@ -20,7 +20,8 @@
     "check:cloud": "tsc -p cloud/tsconfig.json",
     "cloud:bundle": "wrangler deploy --dry-run --config cloud/wrangler.jsonc --outdir build/cloud",
     "cloud:deploy": "wrangler deploy --config cloud/wrangler.jsonc",
-    "package:release": "node scripts/package-release.mjs"
+    "package:release": "node scripts/package-release.mjs",
+    "build:guidance": "node scripts/build-guidance.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
@@ -28,6 +29,7 @@
     "@resvg/resvg-js": "2.6.2",
     "bonjour-service": "1.4.4",
     "https-proxy-agent": "7.0.6",
+    "luaparse": "0.3.1",
     "sharp": "0.35.5",
     "ws": "8.22.0",
     "zod": "3.25.76",
