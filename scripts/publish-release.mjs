@@ -122,8 +122,6 @@ function setVisibility(plan, draft) {
       `repos/${plan.repository}/releases/${plan.release_id}`,
       '-f',
       'tag_name=' + fields.tag_name,
-      '-f',
-      'target_commitish=' + fields.target_commitish,
       '-F',
       'prerelease=true',
       '-F',

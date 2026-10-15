@@ -99,6 +99,7 @@ test('both visibility transitions retain the explicit release ID, tag and source
   validatePreviewIdentity(draft, { id: plan.release_id, tag: plan.tag });
   assert.equal(draft.draft, true);
   assert.equal(draft.target_commitish, commit);
+  assert.equal('target_commitish' in releaseVisibility(plan, true), false);
   const published = patch(draft, releaseVisibility(plan, false));
   validatePreviewIdentity(published, { id: plan.release_id, tag: plan.tag });
   assert.equal(published.draft, false);
