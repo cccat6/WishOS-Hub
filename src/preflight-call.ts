@@ -19,11 +19,18 @@ export async function preflightInvocation(
       depth > 8 ||
       typeof args.path !== 'string' ||
       typeof args.method !== 'string' ||
-      !args.args ||
-      typeof args.args !== 'object'
+      (args.args != null && (typeof args.args !== 'object' || Array.isArray(args.args)))
     )
       throw new PreflightError('operation_request');
-    return preflightInvocation(rpc, compiler, args.path, args.method, args.args, signal, depth + 1);
+    return preflightInvocation(
+      rpc,
+      compiler,
+      args.path,
+      args.method,
+      args.args ?? {},
+      signal,
+      depth + 1,
+    );
   }
   const read = async (p: string, m: string, a: Record<string, unknown> = {}) => {
     const r = await rpc(p, m, a);

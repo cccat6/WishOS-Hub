@@ -161,15 +161,20 @@ async function deployPinned(
     revision = options.expected_revision ?? catalog.revision;
   if (!Number.isSafeInteger(revision) || revision < 0) throw new PreflightError('catalog_revision');
   if (catalog.revision !== revision) throw new PreflightError('base_revision_changed');
-  if (resolveFiles(source, files).some((f) => f.copy_from)) {
-    const transfer = await checked(rpc, '/sys/capabilities', 'describe', {
-      path: '/sys/transfers',
-    });
-    if (!methods(transfer).includes('copy_file'))
-      throw new PreflightError('native_copy_unavailable');
-  }
+  const transferMetadata = await checked(rpc, '/sys/capabilities', 'describe', {
+    path: '/sys/transfers',
+  });
+  if (!methods(transferMetadata).includes('release'))
+    throw new PreflightError('transfer_release_unavailable');
+  if (
+    resolveFiles(source, files).some((f) => f.copy_from) &&
+    !methods(transferMetadata).includes('copy_file')
+  )
+    throw new PreflightError('native_copy_unavailable');
   let validationId: number | undefined,
-    committed = false;
+    committed = false,
+    transferId: number | undefined,
+    transferReleased = false;
   const receipts: Record<string, unknown> = { preflight };
   const record = async (
     key: string,
@@ -177,6 +182,7 @@ async function deployPinned(
     method: string,
     args: Record<string, unknown>,
   ) => {
+    signal.throwIfAborted();
     receipts[key] = { path, method, args, state: 'requesting' };
     const reply = await rpc(path, method, args);
     receipts[key] = reply.ok
@@ -190,6 +196,7 @@ async function deployPinned(
       compiler: options.compiler,
     });
     receipts.transfer = delivered;
+    transferId = delivered.transfer_id;
     const manifestPath = posix.join(delivered.root, pkg.manifest),
       packagePath = posix.join(delivered.root, pkg.header);
     const admission = await record('validation_admission', '/sys/apps', validation.method, {
@@ -200,6 +207,8 @@ async function deployPinned(
     validationId = admission.operation_id;
     if (!Number.isSafeInteger(validationId))
       throw new PackageOutcomeUnknown('validation_identity_missing', receipts);
+    await record('transfer_release', '/sys/transfers', 'release', { id: transferId });
+    transferReleased = true;
     for (;;) {
       signal.throwIfAborted();
       const status = await checked(rpc, '/sys/apps', validation.status_method, {
@@ -268,6 +277,12 @@ async function deployPinned(
       throw new PackageOutcomeUnknown(error.message, receipts);
     throw Object.assign(error instanceof Error ? error : Error(String(error)), { receipts });
   } finally {
+    if (transferId !== undefined && !transferReleased) {
+      const released = await rpc('/sys/transfers', 'release', { id: transferId }).catch(
+        (error) => ({ ok: false, error: String(error) }),
+      );
+      receipts.transfer_cleanup = released;
+    }
     if (validationId !== undefined && !committed)
       await checked(rpc, '/sys/apps', validation.release_method, {
         operation_id: validationId,

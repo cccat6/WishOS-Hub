@@ -32,6 +32,7 @@ export class PackageDevice {
     state: string;
     files_complete: number;
     expected: number;
+    request_id?: string;
     current?: { path: string; size: number; sha256: string; bytes: Buffer };
     copy?: {
       source: string;
@@ -68,7 +69,7 @@ export class PackageDevice {
       async: { launch: { success_events: ['launched', 'failed'] } },
     },
     '/sys/transfers': {
-      methods: 'read,begin,file,chunk,close_file,copy_file,commit,abort',
+      methods: 'read,begin,file,chunk,close_file,copy_file,commit,abort,release',
       read_methods: 'read',
     },
     '/sys/operations': { methods: 'read,request,release', read_methods: 'read' },
@@ -124,6 +125,11 @@ export class PackageDevice {
     }
     if (path === '/sys/transfers') {
       if (method === 'begin') {
+        if (this.transfer?.state === 'committed') {
+          if (a.request_id === this.transfer.request_id)
+            return { ...this.transfer, chunk_bytes: 128 };
+          throw Error('transfer_active');
+        }
         const id = (this.transfer?.id ?? 0) + 1;
         this.transfer = {
           id,
@@ -131,6 +137,7 @@ export class PackageDevice {
           state: 'receiving',
           files_complete: 0,
           expected: a.files,
+          request_id: a.request_id,
         };
         return { ...this.transfer, chunk_bytes: 128 };
       }
@@ -207,6 +214,11 @@ export class PackageDevice {
           throw Error('transfer_incomplete');
         t.state = 'committed';
         return { root: t.root };
+      }
+      if (method === 'release') {
+        if (t.state !== 'committed') throw Error('transfer_not_committed');
+        t.state = 'idle';
+        return { state: 'idle' };
       }
       if (method === 'abort') {
         t.state = 'aborted';

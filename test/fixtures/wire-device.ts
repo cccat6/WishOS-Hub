@@ -130,6 +130,7 @@ export async function eventually<T>(check: () => Promise<T | undefined | false>,
 }
 /** Filesystem-free model of the public transfer protocol for socket tests. */
 export class TransferFixture {
+  constructor(private chunkBytes = 128) {}
   received = Buffer.alloc(0);
   committed = false;
   expectedHash = '';
@@ -142,7 +143,7 @@ export class TransferFixture {
       case 'begin':
         this.received = Buffer.alloc(0);
         this.committed = false;
-        return { id: 1, chunk_bytes: 128, files_complete: 0, state: 'receiving' };
+        return { id: 1, chunk_bytes: this.chunkBytes, files_complete: 0, state: 'receiving' };
       case 'file':
         this.expectedHash = call.args.sha256;
         return { file_offset: 0 };

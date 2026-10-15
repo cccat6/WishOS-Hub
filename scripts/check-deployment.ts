@@ -1,3 +1,4 @@
+import { PackageDevice } from '../test/fixtures/package-device.js';
 import { randomUUID, randomBytes, createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
@@ -24,7 +25,7 @@ assert.equal(metadata.issuer, base);
 const id = randomUUID();
 let owner: string | undefined;
 const device = new WireDevice(),
-  transfer = new TransferFixture();
+  transfer = new TransferFixture(1024);
 let client: Client | undefined;
 try {
   const install = await api('/v1/installations', {
@@ -103,6 +104,99 @@ try {
   }, 60000);
   assert(transfer.committed);
   assert.equal(createHash('sha256').update(transfer.received).digest('hex'), asset.sha256);
+  const native = new PackageDevice();
+  native.boot = device.boot;
+  device.descriptions = native.descriptions;
+  device.board = {
+    component_index: { format: 'wishos-components/1', file: '/system/components.json' },
+  };
+  device.resourceHandler = (c) => native.call(c);
+  native.files.set(
+    '/system/components.json',
+    Buffer.from(
+      JSON.stringify({
+        format: 'wishos-components/1',
+        components: [{ id: 'deployment-fixture', layer: 'driver', kind: 'device' }],
+      }),
+    ),
+  );
+  const finish = async (id: string) =>
+    eventually(async () => {
+      const j = await call('read_resource_job', { id });
+      if (['failed', 'unknown'].includes(j.state)) throw Error(JSON.stringify(j));
+      return j.state === 'completed' ? j.result : false;
+    }, 60000);
+  const stage = async (path: string, text: string) => ({
+    path,
+    artifact_id: (await finish((await call('stage_resource', { text })).id)).id,
+  });
+  const index = await call('get_device_components', {
+    device_id: 'test-device',
+    expected_boot_id: device.boot,
+  });
+  assert.equal(index.components[0].id, 'deployment-fixture');
+  const bad = await stage('bad.lua', 'local = 1');
+  const badJob = await call('preflight_bundle', {
+    files: [bad],
+    device_id: 'test-device',
+    expected_boot_id: device.boot,
+  });
+  const rejected = await eventually(async () => {
+    const j = await call('read_resource_job', { id: badJob.id });
+    return j.state === 'failed' ? j : false;
+  }, 20000);
+  assert.equal(rejected.diagnostics[0].code, 'lua_syntax');
+  assert(!native.calls.some((c) => c.method === 'begin'));
+  const files = [
+    await stage(
+      'app.json',
+      JSON.stringify({
+        format: 'wishos-app/1',
+        id: 'live-check',
+        title: 'Live check',
+        entry: 'main.lua',
+      }),
+    ),
+    await stage('main.lua', 'local x <const> = 1; return {version=x}'),
+    await stage('image.bin', 'unchanged asset'),
+  ];
+  const p = await finish(
+    (
+      await call('prepare_package', {
+        device_id: 'test-device',
+        expected_boot_id: device.boot,
+        files,
+      })
+    ).id,
+  );
+  assert.equal(p.preflight.lua.native_call_depth_limit, 32);
+  const installed = await finish(
+    (
+      await call('deploy_package', {
+        device_id: 'test-device',
+        expected_boot_id: device.boot,
+        files: p.files,
+        activate: true,
+      })
+    ).id,
+  );
+  assert.equal(installed.state, 'activated');
+  const replacement = await stage('main.lua', 'return {version=2}');
+  const updated = await finish(
+    (
+      await call('update_package', {
+        device_id: 'test-device',
+        expected_boot_id: device.boot,
+        application_id: 'live-check',
+        expected_revision: 1,
+        replacements: [replacement],
+      })
+    ).id,
+  );
+  assert.equal(updated.state, 'installed');
+  assert.equal(native.revision, 2);
+  assert.equal(native.files.get('/card/revisions/2/main.lua')!.toString(), 'return {version=2}');
+  assert(!native.reads.has('/card/revisions/1/image.bin'));
   console.log(
     JSON.stringify(
       {
@@ -117,6 +211,12 @@ try {
           'mutation-receipt-no-replay',
           'temporary-assets',
           'streamed-bundle-sha256',
+          'mcp-layer-guidance',
+          'boot-scoped-components',
+          'actual-lua-wasm-profile',
+          'bad-code-no-device-write',
+          'package-native-ticket-install-activate',
+          'whole-file-update-local-copy',
         ],
         physical_device: false,
         vendor_account: false,

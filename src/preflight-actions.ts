@@ -35,8 +35,7 @@ export async function preflightAction(
     if (
       typeof args.path !== 'string' ||
       typeof args.method !== 'string' ||
-      !args.args ||
-      typeof args.args !== 'object'
+      (args.args != null && (typeof args.args !== 'object' || Array.isArray(args.args)))
     )
       throw new PreflightError('operation_request');
     return preflightAction(
@@ -44,7 +43,7 @@ export async function preflightAction(
         type: 'system',
         path: args.path,
         method: args.method,
-        args: args.args as Record<string, unknown>,
+        args: (args.args ?? {}) as Record<string, unknown>,
       },
       context,
     );
