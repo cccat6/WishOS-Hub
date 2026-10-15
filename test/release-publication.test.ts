@@ -1,3 +1,6 @@
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 // @ts-expect-error The publisher is a dependency-free Node CLI, shared with CI.
@@ -7,6 +10,7 @@ import {
   verifyRemoteAssets,
   sha256,
   selectReleaseId,
+  uploadAsset,
 } from '../scripts/publish-release.mjs';
 const commit = 'a'.repeat(40);
 function source() {
@@ -85,4 +89,50 @@ test('draft and published release lookup retains one immutable release identity'
   assert.equal(selectReleaseId([414006214]), 414006214);
   assert.throws(() => selectReleaseId([]), /exactly one release/);
   assert.throws(() => selectReleaseId([414006214, 414006215]), /exactly one release/);
+});
+
+test('draft asset upload uses its release ID, streams original bytes and validates the upload receipt', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'wishos-release-upload-')),
+    bytes = Buffer.from([0, 255, 128, 64, 1, 2, 3]),
+    path = join(root, 'package.zip');
+  const file = { name: 'package.zip', size: bytes.length, sha256: sha256(bytes) };
+  const release = {
+    id: 414006214,
+    upload_url:
+      'https://uploads.github.com/repos/cccat6/WishOS-Hub/releases/414006214/assets{?name,label}',
+  };
+  try {
+    await writeFile(path, bytes);
+    await uploadAsset('cccat6/WishOS-Hub', release, file, path, {
+      token: 'fixture-only',
+      fetcher: async (url: any, init: any) => {
+        assert.equal(url.pathname, '/repos/cccat6/WishOS-Hub/releases/414006214/assets');
+        assert.equal(url.searchParams.get('name'), file.name);
+        assert.equal(init.headers.Authorization, 'Bearer fixture-only');
+        assert.equal(init.redirect, 'error');
+        assert.deepEqual(Buffer.from(await new Response(init.body).arrayBuffer()), bytes);
+        return Response.json({ ...file, digest: 'sha256:' + file.sha256 }, { status: 201 });
+      },
+    });
+    await assert.rejects(
+      uploadAsset('cccat6/WishOS-Hub', release, file, path, {
+        token: 'fixture-only',
+        fetcher: async () =>
+          Response.json({ ...file, digest: 'sha256:' + sha256('wrong') }, { status: 201 }),
+      }),
+      /Uploaded release asset differs/,
+    );
+    await assert.rejects(
+      uploadAsset(
+        'cccat6/WishOS-Hub',
+        { ...release, upload_url: 'https://unrelated.invalid/upload' },
+        file,
+        path,
+        { token: 'fixture-only' },
+      ),
+      /Unexpected GitHub asset upload destination/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

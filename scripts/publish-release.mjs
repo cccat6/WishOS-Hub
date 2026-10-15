@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
+import { Readable } from 'node:stream';
 import { mkdir, readFile, writeFile, readdir, appendFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,6 +55,47 @@ export function verifyRemoteAssets(release, files) {
       matches[0].digest !== `sha256:${file.sha256}`
     )
       throw Error(`Uploaded release asset differs from the selected source: ${file.name}`);
+  }
+}
+export async function uploadAsset(
+  repo,
+  release,
+  file,
+  path,
+  { token = process.env.GH_TOKEN, fetcher = fetch } = {},
+) {
+  if (!token) throw Error('GH_TOKEN is required for a release asset upload');
+  const url = new URL(release.upload_url.replace('{?name,label}', ''));
+  if (
+    url.origin !== 'https://uploads.github.com' ||
+    url.pathname !== `/repos/${repo}/releases/${release.id}/assets`
+  )
+    throw Error('Unexpected GitHub asset upload destination');
+  url.searchParams.set('name', file.name);
+  const stream = createReadStream(path);
+  try {
+    const response = await fetcher(url, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + token,
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': String(file.size),
+        'User-Agent': 'WishOS-Release-Publisher/1',
+      },
+      body: Readable.toWeb(stream),
+      duplex: 'half',
+      redirect: 'error',
+      signal: AbortSignal.timeout(120000),
+    });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw Error('GitHub asset upload HTTP ' + response.status);
+    }
+    const uploaded = await response.json();
+    verifyRemoteAssets({ assets: [uploaded] }, [file]);
+    return uploaded;
+  } finally {
+    stream.destroy();
   }
 }
 async function tagCommit(repo, tag) {
@@ -193,15 +235,13 @@ async function publish(directory) {
     '-F',
     'draft=true',
   );
-  gh(
-    'release',
-    'upload',
-    plan.tag,
-    '--repo',
-    plan.repository,
-    '--clobber',
-    ...files.map((f) => join(root, f.name)),
-  );
+  if (!process.env.GH_TOKEN) throw Error('GH_TOKEN is required for publication');
+  const draft = api(plan.repository, `releases/${plan.release_id}`);
+  for (const file of files) {
+    const old = draft.assets.find((a) => a.name === file.name);
+    if (old) gh('api', '--method', 'DELETE', `repos/${plan.repository}/releases/assets/${old.id}`);
+    await uploadAsset(plan.repository, draft, file, join(root, file.name));
+  }
   verifyRemoteAssets(api(plan.repository, `releases/${plan.release_id}`), files);
   gh(
     'api',
