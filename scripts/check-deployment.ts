@@ -181,6 +181,26 @@ try {
     ).id,
   );
   assert.equal(installed.state, 'activated');
+  let readReconnect = false,
+    reconnectFailure: unknown;
+  device.beforeRespond = async (c) => {
+    if (
+      !readReconnect &&
+      native.revision === 1 &&
+      native.ticket?.state === 'validated' &&
+      c.path === '/sys/capabilities' &&
+      c.args.path === '/sys/apps'
+    ) {
+      readReconnect = true;
+      device.socket.terminate();
+      try {
+        await device.connect(relay.toString(), profile.token);
+      } catch (error) {
+        reconnectFailure = error;
+      }
+      return false;
+    }
+  };
   const replacement = await stage('main.lua', 'return {version=2}');
   const updated = await finish(
     (
@@ -194,6 +214,12 @@ try {
     ).id,
   );
   assert.equal(updated.state, 'installed');
+  if (reconnectFailure) throw reconnectFailure;
+  assert(readReconnect);
+  assert.equal(
+    native.calls.filter((c) => c.path === '/sys/apps' && c.method === 'install').length,
+    2,
+  );
   assert.equal(native.revision, 2);
   assert.equal(native.files.get('/card/revisions/2/main.lua')!.toString(), 'return {version=2}');
   assert(!native.reads.has('/card/revisions/1/image.bin'));
@@ -244,6 +270,7 @@ try {
           'package-native-ticket-install-activate',
           'whole-file-update-local-copy',
           'explicit-stop-after-preflight-before-preparation',
+          'same-boot-read-recovery-before-single-install',
         ],
         physical_device: false,
         vendor_account: false,

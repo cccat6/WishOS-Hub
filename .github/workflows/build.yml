@@ -46,3 +46,19 @@ jobs:
             build/release/*.tar.gz
             build/release/*.zip
             build/release/*.sha256
+
+  guidance:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '24.22.0' }
+      - run: node scripts/package-guidance.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wishos-guidance
+          path: |
+            build/guidance/*.zip
+            build/guidance/*.sha256
+            build/guidance/guidance-publication.json
