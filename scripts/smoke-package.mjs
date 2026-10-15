@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -83,6 +83,11 @@ export async function smokePackage(root) {
         python_required: false,
         checks: ['bundled-runtime', 'http', 'wizard', 'authenticated-mcp'],
       }),
+    );
+    execFileSync(
+      join(root, 'runtime', process.platform === 'win32' ? 'node.exe' : 'node'),
+      [join(root, 'dist/connect/cli.js'), 'stop', '--data-dir', data],
+      { stdio: 'inherit' },
     );
   } finally {
     child.kill('SIGTERM');

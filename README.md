@@ -27,13 +27,15 @@ only. Device WS accepts a separate per-device pairing grant on the LAN listener.
 ```sh
 node dist/connect/cli.js setup --port 18763
 node dist/connect/cli.js status
+node dist/connect/cli.js stop
 node dist/connect/cli.js export --client codex
 node dist/connect/cli.js --stdio
 ```
 
 Use `--data-dir PATH` or `WISHOS_HOME` to select independent installations. The
 stdio entry starts/reuses a connector and writes only MCP protocol to stdout.
-Stop a foreground connector with Ctrl-C. Existing settings survive an upgrade;
+Stop a foreground connector with Ctrl-C, or use `wishos-hub stop` for the
+background connector. Existing settings survive an upgrade;
 replace the extracted program, not the data directory.
 
 ## Two directions, one tool contract

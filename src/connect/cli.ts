@@ -10,13 +10,13 @@ import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { hubApi } from '../hub-api.js';
 import { clientConfigurations } from './mcp-config.js';
 const entry = fileURLToPath(import.meta.url);
-const help = `WishOS Hub\nUsage: wishos-hub [setup|serve|status|export] [--data-dir PATH] [--host ADDRESS] [--port NUMBER] [--no-browser]\n       wishos-hub --stdio [--data-dir PATH]\n\nsetup opens a local browser wizard. stdio starts/reuses the local connector for an MCP client.\nSessions and model credentials remain in your chosen runtime. Docker is not required.`;
+const help = `WishOS Hub\nUsage: wishos-hub [setup|serve|stop|status|export] [--data-dir PATH] [--host ADDRESS] [--port NUMBER] [--no-browser]\n       wishos-hub --stdio [--data-dir PATH]\n\nsetup opens a local browser wizard. stdio starts/reuses the local connector for an MCP client.\nSessions and model credentials remain in your chosen runtime. Docker is not required.`;
 function parse(args: string[]) {
   let command = 'setup';
   const options: Record<string, string | boolean> = {};
   for (let i = 0; i < args.length; ++i) {
     const arg = args[i]!;
-    if (['setup', 'serve', 'status', 'export'].includes(arg)) {
+    if (['setup', 'serve', 'stop', 'status', 'export'].includes(arg)) {
       command = arg;
       continue;
     }
@@ -72,6 +72,25 @@ async function main() {
       typeof options['data-dir'] === 'string' ? options['data-dir'] : defaultDataRoot(),
     ),
     settings = new ConfigStore(root);
+  if (command === 'stop') {
+    const info = await running(root);
+    if (!info) {
+      console.log(JSON.stringify({ running: false }));
+      return;
+    }
+    if (!Number.isInteger(info.pid) || info.pid <= 1)
+      throw Error('Invalid connector process identity');
+    process.kill(info.pid, 'SIGTERM');
+    const until = Date.now() + 15000;
+    while (Date.now() < until) {
+      if (!(await running(root))) {
+        console.log(JSON.stringify({ stopped: true }));
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw Error('Connector is still stopping; inspect native runtime work before restarting.');
+  }
   if (command === 'status') {
     const info = await running(root);
     console.log(
