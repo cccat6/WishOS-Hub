@@ -819,3 +819,193 @@ test('a lost install response stays uncertain even if the device committed the c
     await f.close();
   }
 });
+
+test('stopping the current runtime for deployment is explicit and happens after checks, before preparation', async () => {
+  const f = await fixture();
+  const { PackageDevice } = await import('./fixtures/package-device.js'),
+    { deployPackage } = await import('../src/packages.js');
+  const d = new PackageDevice();
+  try {
+    d.preparationNeedsIdle = true;
+    const p = await packageFiles(f.source);
+    await assert.rejects(
+      deployPackage(f.source, p.files, d.rpc, d.boot, {
+        compiler: nodeLuaCompiler,
+        signal: signal(),
+        activate: true,
+      }),
+      /native_operation_memory_budget/,
+    );
+    assert.equal(d.active, 'original');
+    assert(!d.calls.some((c) => c.path === '/sys/runtime' && c.method === 'stop'));
+    const result = await deployPackage(f.source, p.files, d.rpc, d.boot, {
+      compiler: nodeLuaCompiler,
+      signal: signal(),
+      activate: true,
+      stop_current_before_transfer: true,
+    });
+    assert.equal(result.state, 'activated');
+    assert.equal((result.receipts.runtime_stop as any).loaded, false);
+    const stop = d.calls.findIndex((c) => c.path === '/sys/runtime' && c.method === 'stop'),
+      begin = d.calls.findIndex((c) => c.path === '/sys/transfers' && c.method === 'begin');
+    assert(stop >= 0 && begin > stop);
+    assert(d.calls.slice(0, stop).some((c) => c.path === '/sys/apps' && c.method === 'read'));
+    assert.equal(d.calls.filter((c) => c.path === '/sys/runtime' && c.method === 'stop').length, 1);
+  } finally {
+    await f.close();
+  }
+});
+test('invalid deployment policy, bad declared budgets, stale revision and wrong boot never stop a runtime', async () => {
+  const f = await fixture();
+  const { PackageDevice } = await import('./fixtures/package-device.js'),
+    { deployPackage } = await import('../src/packages.js');
+  const d = new PackageDevice();
+  try {
+    const p = await packageFiles(f.source),
+      opts = {
+        compiler: nodeLuaCompiler,
+        signal: signal(),
+        activate: true,
+        stop_current_before_transfer: true,
+      };
+    await assert.rejects(
+      deployPackage(f.source, p.files, d.rpc, d.boot, { ...opts, activate: false }),
+      /stop_current_requires_activation/,
+    );
+    const tooLarge = await packageFiles(f.source, 'return {}', { memory_bytes: 300000 });
+    await assert.rejects(
+      deployPackage(f.source, tooLarge.files, d.rpc, d.boot, opts),
+      /application_budget/,
+    );
+    await assert.rejects(
+      deployPackage(f.source, p.files, d.rpc, d.boot, { ...opts, expected_revision: 99 }),
+      /base_revision_changed/,
+    );
+    await assert.rejects(
+      deployPackage(f.source, p.files, d.rpc, 'wrong-boot', opts),
+      (error: any) =>
+        error.diagnostics?.some(
+          (d: any) => d.code === 'device_boot_changed' || d.detail === 'device_boot_changed',
+        ),
+    );
+    d.descriptions['/sys/runtime'].methods = 'read,load,validate';
+    await assert.rejects(
+      deployPackage(f.source, p.files, d.rpc, d.boot, opts),
+      /runtime_stop_unavailable/,
+    );
+    assert.equal(d.active, 'original');
+    assert(!d.calls.some((c) => c.method === 'stop' || c.method === 'begin'));
+  } finally {
+    await f.close();
+  }
+});
+test('failure after an explicitly requested stop retains its receipt and never restarts an application', async () => {
+  const f = await fixture();
+  const { PackageDevice } = await import('./fixtures/package-device.js'),
+    { deployPackage } = await import('../src/packages.js');
+  const d = new PackageDevice();
+  try {
+    d.preparationNeedsIdle = true;
+    d.failPreparationAfterStop = true;
+    const p = await packageFiles(f.source);
+    let failure: any;
+    try {
+      await deployPackage(f.source, p.files, d.rpc, d.boot, {
+        compiler: nodeLuaCompiler,
+        signal: signal(),
+        activate: true,
+        stop_current_before_transfer: true,
+      });
+    } catch (error) {
+      failure = error;
+    }
+    assert.match(failure.message, /native_operation_memory_budget/);
+    assert.equal(failure.receipts.runtime_stop.loaded, false);
+    assert.equal(failure.receipts.install, undefined);
+    assert.equal(d.active, '');
+    assert.equal(d.revision, 0);
+    assert(!d.calls.some((c) => c.path === '/sys/operations' && c.method === 'request'));
+    assert.equal(d.calls.filter((c) => c.path === '/sys/runtime' && c.method === 'stop').length, 1);
+  } finally {
+    await f.close();
+  }
+});
+test('whole-file update validates the complete candidate before any opt-in stop and shares the deployment policy', async () => {
+  const f = await fixture();
+  const { PackageDevice } = await import('./fixtures/package-device.js'),
+    { deployPackage } = await import('../src/packages.js'),
+    { runPackageJob } = await import('../src/package-jobs.js');
+  const d = new PackageDevice();
+  try {
+    const p = await packageFiles(f.source);
+    await deployPackage(f.source, p.files, d.rpc, d.boot, {
+      compiler: nodeLuaCompiler,
+      signal: signal(),
+      activate: true,
+    });
+    d.preparationNeedsIdle = true;
+    const input = {
+        device_id: 'device',
+        expected_boot_id: d.boot,
+        application_id: 'sample',
+        expected_revision: 1,
+        replacements: [await stage(f.source, 'main.lua', 'local = 1')],
+        activate: true,
+        stop_current_before_transfer: true,
+      },
+      context = {
+        source: f.source,
+        stage: (text: string, s: AbortSignal) => f.source.stage({ text }, s),
+        compiler: nodeLuaCompiler,
+        rpc: () => d.rpc,
+        signal: signal(),
+      };
+    await assert.rejects(runPackageJob('package_update', input, context), /lua_syntax/);
+    assert.equal(d.active, 'sample');
+    assert(!d.calls.some((c) => c.path === '/sys/runtime' && c.method === 'stop'));
+    const result = await runPackageJob(
+      'package_update',
+      { ...input, replacements: [await stage(f.source, 'main.lua', 'return {version=2}')] },
+      context,
+    );
+    assert.equal(result.state, 'activated');
+    assert.equal(d.revision, 2);
+    assert.equal(result.receipts.runtime_stop.loaded, false);
+    assert.equal(
+      d.files.get('/card/revisions/1/main.lua')!.toString(),
+      'return {on_start=function() end}',
+    );
+    assert.equal(d.files.get('/card/revisions/2/main.lua')!.toString(), 'return {version=2}');
+  } finally {
+    await f.close();
+  }
+});
+
+test('a catalog change during method discovery prevents the explicitly requested stop', async () => {
+  const f = await fixture();
+  const { PackageDevice } = await import('./fixtures/package-device.js'),
+    { deployPackage } = await import('../src/packages.js');
+  const d = new PackageDevice();
+  try {
+    const p = await packageFiles(f.source),
+      rpc: DeviceRpc = async (path, method, args) => {
+        const reply = await d.rpc(path, method, args);
+        if (path === '/sys/capabilities' && args.path === '/sys/transfers') d.revision = 1;
+        return reply;
+      };
+    await assert.rejects(
+      deployPackage(f.source, p.files, rpc, d.boot, {
+        compiler: nodeLuaCompiler,
+        signal: signal(),
+        expected_revision: 0,
+        activate: true,
+        stop_current_before_transfer: true,
+      }),
+      /base_revision_changed/,
+    );
+    assert.equal(d.active, 'original');
+    assert(!d.calls.some((c) => c.method === 'stop' || c.method === 'begin'));
+  } finally {
+    await f.close();
+  }
+});

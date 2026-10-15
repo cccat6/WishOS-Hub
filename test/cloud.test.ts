@@ -657,6 +657,28 @@ test('cloud MCP package tools deliver, await native admission and update whole f
       native.calls.filter((c) => c.path === '/sys/operations' && c.method === 'request').length,
       2,
     );
+    native.activationCompletionError = undefined;
+    native.preparationNeedsIdle = true;
+    const explicit = await finish(
+      (
+        await call('update_package', {
+          device_id: 'device',
+          expected_boot_id: wire.boot,
+          application_id: 'relay-app',
+          expected_revision: 3,
+          replacements: [await stage('main.lua', 'return {version=4}')],
+          activate: true,
+          stop_current_before_transfer: true,
+        })
+      ).id,
+    );
+    assert.equal(explicit.state, 'activated');
+    assert.equal(explicit.revision, 4);
+    assert.equal(explicit.receipts.runtime_stop.loaded, false);
+    assert.equal(
+      native.calls.filter((c) => c.path === '/sys/runtime' && c.method === 'stop').length,
+      1,
+    );
   } finally {
     await client.close();
     await wire.close();

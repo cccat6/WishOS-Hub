@@ -220,7 +220,7 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
   job(
     'deploy_package',
     'package_deploy',
-    'Preflight the complete package, deliver it, await native validation and install with a matching ticket/catalog revision. Activation is optional and has separate completion. Installation can remain committed when activation fails; read install/activation receipts. Poll read_resource_job and reconcile uncertain effects before retrying.',
+    'Preflight the complete package, deliver it, await native validation and install with a matching ticket/catalog revision. Activation is optional and has separate completion. Installation can remain committed when activation fails; read install/activation receipts. Optional stop_current_before_transfer requires activate:true and stops the current runtime only after full preflight and boot/revision checks. Failure can leave it stopped; no implicit stop, rollback or retry. Poll read_resource_job and reconcile uncertain effects before retrying.',
     {
       device_id: z.string(),
       expected_boot_id: z.string(),
@@ -229,12 +229,13 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
       expected_revision: z.number().int().nonnegative().optional(),
       persist: z.boolean().default(true),
       activate: z.boolean().default(false),
+      stop_current_before_transfer: z.boolean().default(false),
     },
   );
   job(
     'update_package',
     'package_update',
-    'Replace whole files/delete files in a new immutable revision of an installed package. Reads unchanged control sources for complete preflight; unchanged binary assets stay on device and require native local-copy digest verification. Never edit lines or silently merge a changed catalog base. User data stays outside application revisions. Validation does not reserve runtime memory; installation and optional activation have separate receipts.',
+    'Replace whole files/delete files in a new immutable revision of an installed package. Reads unchanged control sources for complete preflight; unchanged binary assets stay on device and require native local-copy digest verification. Never edit lines or silently merge a changed catalog base. User data stays outside application revisions. Validation does not reserve runtime memory; installation and optional activation have separate receipts. stop_current_before_transfer is explicit, defaults false and requires activate:true; it stops the runtime only after complete preflight and boot/revision checks, never as an automatic retry.',
     {
       device_id: z.string(),
       expected_boot_id: z.string(),
@@ -244,6 +245,7 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
       delete: z.array(z.string()).default([]),
       persist: z.boolean().default(true),
       activate: z.boolean().default(false),
+      stop_current_before_transfer: z.boolean().default(false),
     },
   );
   tool(

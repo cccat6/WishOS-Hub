@@ -20,8 +20,9 @@ Before delivery, the host compiles Lua text using the pinned 5.4.8 parser withou
 executing it, checks manifests/known references, and compares requirements with
 live target capabilities and parser/resource limits. A JSON file is not proof of
 a valid UI or app. UI documents use the renderer's advertised subset. Dynamic Lua
-behavior cannot be proven statically; normal runtime budgets and failure handling
-still apply. No guide can guarantee arbitrary generated code is correct.
+behavior or execution peak memory cannot be proven statically; normal runtime
+budgets and failure handling still apply. A VM memory budget is a ceiling with
+checked actual growth, not guaranteed free memory or a full-size reservation. No guide can guarantee arbitrary generated code is correct.
 
 After delivery, call `/sys/apps validate {manifest,package}` through the discovered
 async completion interface. Its `validated` completion includes `operation_id` and
@@ -55,9 +56,13 @@ Only changed files need network delivery. The new full copy still uses storage
 space and writes on the selected volume; respect its quota and retention policy.
 
 A running managed package has a read lease; raw filesystem/NFS writes cannot edit
-it in place. A stale catalog revision, source mismatch, lost media, low memory or
-failed persistence leaves the prior catalog and running application in place.
-A later launch rechecks the package before activation. Keep old revisions until
+it in place. Rejected validation or catalog commit preserves the prior catalog
+and running application. Installation success commits the new catalog revision;
+a later activation failure does not undo that installation. A later launch
+rechecks the package and prepares the candidate before replacing the current VM.
+Failed preparation keeps the old VM. on_start is side-effectful and runs after
+replacement, so its failure cannot promise restoration of the old VM. Inspect
+installation, activation and foreground receipts separately. Keep old revisions until
 explicitly unused and removed; do not delete an active revision. On reboot discard
 old volatile handles and reconcile durable catalog state. A lost ACK is not a
 reason to repeat installation/activation blindly.

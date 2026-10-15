@@ -161,3 +161,10 @@ read large unchanged binary assets back to the host. Native copying verifies
 their expected digest. Books/history stay outside app revisions. Old revisions
 remain until explicit removal and never receive line patches. A lost mutation
 reply requires receipt reconciliation rather than blind re-execution.
+
+For a deliberate interruption during deployment, deploy_package/update_package
+also accept `stop_current_before_transfer:true` with `activate:true`. The default
+is false. Hub completes static and boot/revision checks first, records the explicit
+runtime stop, then performs preparation/transfer. Failure may leave that runtime
+stopped or a new revision installed; consult receipts. No implicit retry, automatic
+restoration or reduction of native resource protections occurs.

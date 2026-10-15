@@ -26,6 +26,7 @@ const schemas = {
       expected_revision: z.number().int().nonnegative().optional(),
       persist: z.boolean().default(true),
       activate: z.boolean().default(false),
+      stop_current_before_transfer: z.boolean().default(false),
     })
     .strict(),
   package_update: z
@@ -38,6 +39,7 @@ const schemas = {
       delete: z.array(z.string()).default([]),
       persist: z.boolean().default(true),
       activate: z.boolean().default(false),
+      stop_current_before_transfer: z.boolean().default(false),
     })
     .strict(),
 };
@@ -56,6 +58,8 @@ export async function runPackageJob(
   const schema = (schemas as Record<string, z.ZodTypeAny>)[kind];
   if (!schema) throw Error('package_job_kind');
   const input = schema.parse(raw);
+  if (input.stop_current_before_transfer && !input.activate)
+    throw new PreflightError('stop_current_requires_activation');
   if (input.device_id && !input.expected_boot_id) throw new PreflightError('target_boot_required');
   const rpc = input.device_id ? context.rpc?.(input.device_id) : undefined,
     options = {

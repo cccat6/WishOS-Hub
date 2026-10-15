@@ -59,3 +59,15 @@ When requested activation fails, a failed job may still contain a successful
 install receipt with the new revision/paths and a failed activation receipt.
 Keep those outcomes distinct, preserve the old foreground if the native service
 does so, and never invent an automatic rollback or repeat on_start.
+
+For an explicitly chosen deployment interruption, deploy_package and update_package
+accept `stop_current_before_transfer:true` together with `activate:true` (the stop
+option defaults false). Hub first checks the entire resulting package, boot,
+catalog revision and required methods; only then does it call the advertised
+/sys/runtime stop, recording runtime_stop before transfer/preparation starts.
+This may release memory for native workers without changing device budgets. A
+later failure may leave the runtime stopped or the new catalog already installed;
+read all receipts. Hub never silently enables this option, retries with it, rolls
+back the catalog, or restarts old/new on_start. Without it the old VM is retained
+through normal native admission. The option does not rewrite returned managed
+application/system action sequences or their $previous references.

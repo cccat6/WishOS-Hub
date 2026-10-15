@@ -315,6 +315,24 @@ test('local MCP package admission and device-selected component discovery use th
     assert.equal(result.state, 'activated');
     assert.equal(native.active, 'local-app');
     assert.equal(native.ticket, undefined);
+    native.preparationNeedsIdle = true;
+    const replaced = await stage('main.lua', 'return {version=2}');
+    const updated = await finish(
+      (
+        await call('update_package', {
+          device_id: 'device',
+          expected_boot_id: wire.boot,
+          application_id: 'local-app',
+          expected_revision: 1,
+          replacements: [replaced],
+          activate: true,
+          stop_current_before_transfer: true,
+        })
+      ).id,
+    );
+    assert.equal(updated.state, 'activated');
+    assert.equal(updated.receipts.runtime_stop.loaded, false);
+    assert.equal(native.revision, 2);
   } finally {
     await client.close();
     await wire.close();

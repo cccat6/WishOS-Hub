@@ -17,6 +17,9 @@ export class PackageDevice {
   released = 0;
   failValidation = false;
   failActivation = false;
+  preparationNeedsIdle = false;
+  preparationReady = false;
+  failPreparationAfterStop = false;
   activationCompletionError?: string;
   pendingApplication?: string;
   installed?: { manifest: string; package: string; inventory_sha256: string; application: any };
@@ -47,7 +50,7 @@ export class PackageDevice {
   };
   descriptions: Record<string, any> = {
     '/sys/runtime': {
-      methods: 'read,load,validate',
+      methods: 'read,load,validate,stop',
       read_methods: 'read',
       engine: 'lua-5.4.8',
       memory_budget_semantics: 'elastic_limit_with_checked_actual_growth',
@@ -78,6 +81,7 @@ export class PackageDevice {
     '/sys/operations': { methods: 'read,request,release', read_methods: 'read' },
     '/fs': { methods: 'read,stat,mounts', read_methods: 'read,stat,mounts' },
     '/sys/board': { methods: 'read', read_methods: 'read' },
+    '/dev/media': { methods: 'read,mount', read_methods: 'read' },
   };
   rpc: DeviceRpc = async (path, method, args) => {
     try {
@@ -109,13 +113,28 @@ export class PackageDevice {
     if (path === '/sys/runtime') {
       if (method === 'read')
         return { source_limit_bytes: 65536, memory_policy_limit_bytes: 260000 };
+      if (method === 'stop') {
+        this.active = '';
+        return { loaded: false };
+      }
       if (method === 'load') {
         this.active = 'raw';
         return { loaded: true };
       }
     }
     if (path === '/fs') {
-      if (method === 'mounts') return { providers: [] };
+      if (method === 'mounts')
+        return {
+          providers: this.preparationNeedsIdle
+            ? [
+                {
+                  id: 'card',
+                  available: this.preparationReady,
+                  prepare: { path: '/dev/media', method: 'mount', args: {} },
+                },
+              ]
+            : [],
+        };
       const bytes = this.files.get(a.file);
       if (!bytes) throw Error('file_not_found');
       if (method === 'stat') return { directory: false, size: String(bytes.length) };
@@ -125,6 +144,13 @@ export class PackageDevice {
         this.reads.set(a.file, (this.reads.get(a.file) ?? 0) + part.length);
         return { hex: part.toString('hex'), next_offset: String(start + part.length) };
       }
+    }
+    if (path === '/dev/media') {
+      if (method === 'read') return { link_ready: false };
+      if (this.active || this.failPreparationAfterStop)
+        throw Error('native_operation_memory_budget');
+      this.preparationReady = true;
+      return { available: true };
     }
     if (path === '/sys/transfers') {
       if (method === 'begin') {
@@ -167,7 +193,7 @@ export class PackageDevice {
           state: t?.state ?? 'idle',
           id: t?.id,
           files_complete: t?.files_complete,
-          policy: { targets: [] },
+          policy: { targets: this.preparationNeedsIdle ? [{ provider: 'card' }] : [] },
         };
       }
       if (!t || a.id !== t.id) throw Error('transfer_id');

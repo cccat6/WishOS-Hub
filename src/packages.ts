@@ -101,20 +101,24 @@ export class PackageOutcomeUnknown extends Error {
     this.name = 'PackageOutcomeUnknown';
   }
 }
+export type DeploymentOptions = {
+  compiler: LuaCompilerFactory;
+  signal: AbortSignal;
+  package?: string;
+  expected_revision?: number;
+  persist?: boolean;
+  activate?: boolean;
+  stop_current_before_transfer?: boolean;
+};
 export async function deployPackage(
   source: BundleSource,
   files: DeliveryFile[],
   rpcInput: DeviceRpc,
   boot: string,
-  options: {
-    compiler: LuaCompilerFactory;
-    signal: AbortSignal;
-    package?: string;
-    expected_revision?: number;
-    persist?: boolean;
-    activate?: boolean;
-  },
+  options: DeploymentOptions,
 ) {
+  if (options.stop_current_before_transfer && !options.activate)
+    throw new PreflightError('stop_current_requires_activation');
   const release = source.pin?.(resolveFiles(source, files));
   try {
     return await deployPinned(source, files, rpcInput, boot, options);
@@ -127,14 +131,7 @@ async function deployPinned(
   files: DeliveryFile[],
   rpcInput: DeviceRpc,
   boot: string,
-  options: {
-    compiler: LuaCompilerFactory;
-    signal: AbortSignal;
-    package?: string;
-    expected_revision?: number;
-    persist?: boolean;
-    activate?: boolean;
-  },
+  options: DeploymentOptions,
 ) {
   const rpc = bootRpc(rpcInput, boot),
     signal = options.signal,
@@ -171,6 +168,10 @@ async function deployPinned(
     !methods(transferMetadata).includes('copy_file')
   )
     throw new PreflightError('native_copy_unavailable');
+  if (options.stop_current_before_transfer) {
+    const runtime = await checked(rpc, '/sys/capabilities', 'describe', { path: '/sys/runtime' });
+    if (!methods(runtime).includes('stop')) throw new PreflightError('runtime_stop_unavailable');
+  }
   let validationId: number | undefined,
     committed = false,
     transferId: number | undefined,
@@ -192,6 +193,11 @@ async function deployPinned(
     return reply.result;
   };
   try {
+    if (options.stop_current_before_transfer) {
+      const current = await checked(rpc, '/sys/apps', 'read');
+      if (current.revision !== revision) throw new PreflightError('base_revision_changed');
+      await record('runtime_stop', '/sys/runtime', 'stop', {});
+    }
     const delivered = await deliverBundle(rpc, files, signal, boot, undefined, source, {
       compiler: options.compiler,
     });

@@ -1,7 +1,7 @@
 {
   "format": "wishos-source-snapshot/1",
   "repository": "https://github.com/cccat6/WishOS",
-  "commit": "040bf8a63e1a511bdab08d94493b40940def9d6b",
+  "commit": "7c9c096701f1d49b46e88a5dca85c46051e91615",
   "files": [
     {
       "id": "resource-model",
@@ -71,7 +71,7 @@
     {
       "id": "packages",
       "path": "skills/agentic-notes-hardware/references/packages.md",
-      "sha256": "d418c846d5cb1a7fdf5eb603a8c20ea19115e7bdf5a9a8cc0bb843a6ef1cc84e"
+      "sha256": "e77c7c58ce21a9285d6721bc672f2ca3a9afc3b5ba412cdd41eecaa161554b55"
     }
   ]
 }
