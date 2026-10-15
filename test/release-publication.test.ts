@@ -10,7 +10,7 @@ import {
   verifyRemoteAssets,
   sha256,
   validatePreviewIdentity,
-  releaseVisibility,
+  verifyPublication,
   uploadAsset,
 } from '../scripts/publish-release.mjs';
 const commit = 'a'.repeat(40);
@@ -86,32 +86,89 @@ test('a stale per-file manifest or aggregate generation cannot be accepted by ch
   );
 });
 
-test('both visibility transitions retain the explicit release ID, tag and source commit', () => {
-  const plan = { release_id: 414006214, tag: 'v0.4.0-preview.1', source_commit: commit };
-  const original = { id: plan.release_id, tag_name: plan.tag, prerelease: true, draft: false };
-  // GitHub can reset tag_name on draft edits when it is omitted from the patch.
-  const patch = (state: any, fields: any) => ({
-    ...state,
-    tag_name: fields.tag_name ?? 'untagged',
-    ...fields,
-  });
-  const draft = patch(original, releaseVisibility(plan, true));
-  validatePreviewIdentity(draft, { id: plan.release_id, tag: plan.tag });
-  assert.equal(draft.draft, true);
-  assert.equal(draft.target_commitish, commit);
-  assert.equal('target_commitish' in releaseVisibility(plan, true), false);
-  const published = patch(draft, releaseVisibility(plan, false));
-  validatePreviewIdentity(published, { id: plan.release_id, tag: plan.tag });
-  assert.equal(published.draft, false);
+test('owner publication checks complete source lineage and rejects unverified or altered draft assets', () => {
+  const artifacts = source(),
+    archives = ['darwin-arm64', 'darwin-x64', 'linux-x64', 'win32-x64'].map((p) => ({
+      name: 'wishos-hub-test-' + p + (p.startsWith('win32') ? '.zip' : '.tar.gz'),
+      sha256: sha256(p),
+      size: 100,
+    }));
+  const files = archives
+    .flatMap((a) => [a, { name: a.name + '.sha256', sha256: sha256(a.sha256), size: 100 }])
+    .concat({ name: 'SHA256SUMS', sha256: sha256('manifest'), size: 100 });
+  const manifest = {
+    release_id: 414006214,
+    tag: 'vtest',
+    source_commit: commit,
+    artifacts,
+    archives,
+    files,
+    publisher: { run_id: 99, source_commit: 'publisher-sha' },
+  };
+  const release = {
+    id: manifest.release_id,
+    tag_name: manifest.tag,
+    prerelease: true,
+    draft: true,
+    assets: files.map((f) => ({ ...f, digest: 'sha256:' + f.sha256 })),
+  };
+  const verification = {
+    id: 99,
+    status: 'completed',
+    conclusion: 'success',
+    head_sha: 'publisher-sha',
+    path: '.github/workflows/publish-existing.yml',
+  };
+  verifyPublication(manifest, release, verification, run, artifacts, commit);
+  verifyPublication(manifest, { ...release, draft: false }, verification, run, artifacts, commit);
   assert.throws(
     () =>
-      validatePreviewIdentity(
-        { ...draft, tag_name: 'untagged' },
-        { id: plan.release_id, tag: plan.tag },
+      verifyPublication(
+        manifest,
+        release,
+        { ...verification, conclusion: 'failure' },
+        run,
+        artifacts,
+        commit,
+      ),
+    /not successful/,
+  );
+  assert.throws(
+    () =>
+      verifyPublication(
+        manifest,
+        { ...release, assets: release.assets.slice(1) },
+        verification,
+        run,
+        artifacts,
+        commit,
+      ),
+    /Uploaded release asset differs/,
+  );
+  assert.throws(
+    () =>
+      verifyPublication(
+        manifest,
+        { ...release, tag_name: 'untagged' },
+        verification,
+        run,
+        artifacts,
+        commit,
       ),
     /identity/,
   );
-  assert.throws(() => validatePreviewIdentity(draft, { id: 999, tag: plan.tag }), /identity/);
+  assert.throws(
+    () =>
+      verifyPublication(
+        manifest,
+        release,
+        verification,
+        run,
+        artifacts.map((a, i) => (i ? a : { ...a, id: 999 })),
+        commit,
+      ),
+    /source changed/,
+  );
 });
 test('draft asset upload uses its release ID, streams original bytes and validates the upload receipt', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wishos-release-upload-')),

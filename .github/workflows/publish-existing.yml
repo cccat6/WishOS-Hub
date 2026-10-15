@@ -44,5 +44,5 @@ jobs:
           artifact-ids: ${{ steps.source.outputs.artifact_ids }}
           path: release-assets
           merge-multiple: true
-      - name: Publish one verified generation
+      - name: Restore and verify draft assets
         run: node scripts/publish-release.mjs publish release-assets

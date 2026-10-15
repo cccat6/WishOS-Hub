@@ -109,26 +109,6 @@ export function validatePreviewIdentity(release, { id, tag }) {
   if (release.id !== id || release.tag_name !== tag || !release.prerelease)
     throw Error('Preview release identity does not match the explicit ID and tag');
 }
-export function releaseVisibility(plan, draft) {
-  return { tag_name: plan.tag, target_commitish: plan.source_commit, prerelease: true, draft };
-}
-function setVisibility(plan, draft) {
-  const fields = releaseVisibility(plan, draft);
-  return JSON.parse(
-    gh(
-      'api',
-      '--method',
-      'PATCH',
-      `repos/${plan.repository}/releases/${plan.release_id}`,
-      '-f',
-      'tag_name=' + fields.tag_name,
-      '-F',
-      'prerelease=true',
-      '-F',
-      'draft=' + fields.draft,
-    ),
-  );
-}
 async function prepare() {
   const repo = process.env.GITHUB_REPOSITORY,
     tag = process.env.RELEASE_TAG,
@@ -218,24 +198,24 @@ async function publish(directory) {
     process.env.REPLACE_EXISTING !== 'true'
   )
     throw Error('Release already has packages; explicit replace_existing is required');
-  const provenance = {
-    ...plan,
-    published_at: new Date().toISOString(),
-    archives,
-    replaced_assets: release.assets
-      .filter((a) => expectedNames.includes(a.name) || a.name === 'SHA256SUMS')
-      .map((a) => ({ name: a.name, digest: a.digest, updated_at: a.updated_at })),
-  };
   await writeFile(
     join(root, 'SHA256SUMS'),
     archives.map((a) => `${a.sha256}  ${a.name}\n`).join(''),
   );
+  files.push({ name: 'SHA256SUMS', ...(await fileDigest(join(root, 'SHA256SUMS'))) });
+  const provenance = {
+    ...plan,
+    assembled_at: new Date().toISOString(),
+    archives,
+    files: [...files],
+    replaced_assets: release.assets
+      .filter((a) => expectedNames.includes(a.name) || a.name === 'SHA256SUMS')
+      .map((a) => ({ name: a.name, digest: a.digest, updated_at: a.updated_at })),
+  };
   await writeFile(join(root, 'publication.json'), JSON.stringify(provenance, null, 2) + '\n');
-  for (const name of ['SHA256SUMS', 'publication.json'])
-    files.push({ name, ...(await fileDigest(join(root, name))) });
-  // Hide the preview while GitHub's per-asset API is being updated. Failure leaves
-  // a draft; only a fully checked generation is made visible again.
-  setVisibility(plan, true);
+  files.push({ name: 'publication.json', ...(await fileDigest(join(root, 'publication.json'))) });
+  // Owner controls visibility; Actions only restores assets to an existing draft.
+  if (!release.draft) throw Error('The owner must withdraw the preview before replacement');
   if (!process.env.GH_TOKEN) throw Error('GH_TOKEN is required for publication');
   const draft = api(plan.repository, `releases/${plan.release_id}`);
   for (const file of files) {
@@ -244,14 +224,14 @@ async function publish(directory) {
     await uploadAsset(plan.repository, draft, file, join(root, file.name));
   }
   verifyRemoteAssets(api(plan.repository, `releases/${plan.release_id}`), files);
-  setVisibility(plan, false);
   const final = api(plan.repository, `releases/${plan.release_id}`);
   verifyRemoteAssets(final, files);
-  if (final.draft) throw Error('Release did not leave draft state');
+  if (!final.draft) throw Error('Release became visible before owner verification');
   console.log(
     JSON.stringify(
       {
-        published: true,
+        ready_for_owner_publication: true,
+        release_id: plan.release_id,
         url: final.html_url,
         source_build: plan.build,
         source_commit: plan.source_commit,
@@ -263,8 +243,102 @@ async function publish(directory) {
     ),
   );
 }
+export function verifyPublication(
+  manifest,
+  release,
+  verificationRun,
+  sourceRun,
+  sourceArtifacts,
+  commit,
+) {
+  validatePreviewIdentity(release, { id: manifest.release_id, tag: manifest.tag });
+  const artifacts = validateSource(sourceRun, sourceArtifacts, commit);
+  if (
+    commit !== manifest.source_commit ||
+    JSON.stringify(artifacts.map((a) => [a.id, a.digest]).sort()) !==
+      JSON.stringify(manifest.artifacts.map((a) => [a.id, a.digest]).sort())
+  )
+    throw Error('Publication source changed');
+  if (
+    verificationRun.status !== 'completed' ||
+    verificationRun.conclusion !== 'success' ||
+    String(verificationRun.id) !== String(manifest.publisher.run_id) ||
+    verificationRun.head_sha !== manifest.publisher.source_commit ||
+    verificationRun.path !== '.github/workflows/publish-existing.yml'
+  )
+    throw Error('Draft verification run is not successful for this manifest');
+  if (manifest.archives.length !== 4 || manifest.files.length !== 9)
+    throw Error('Incomplete publication manifest');
+  const names = manifest.archives
+    .flatMap((a) => [a.name, a.name + '.sha256'])
+    .concat('SHA256SUMS')
+    .sort();
+  if (JSON.stringify(names) !== JSON.stringify(manifest.files.map((f) => f.name).sort()))
+    throw Error('Publication file set mismatch');
+  verifyRemoteAssets(release, manifest.files);
+}
+async function finalize(path) {
+  const bytes = await readFile(path),
+    manifest = JSON.parse(bytes.toString()),
+    repo = process.env.GITHUB_REPOSITORY;
+  if (!repo || manifest.repository !== repo)
+    throw Error('Explicit GITHUB_REPOSITORY must match the publication manifest');
+  const release = api(repo, `releases/${manifest.release_id}`),
+    verificationRun = api(repo, `actions/runs/${manifest.publisher.run_id}`),
+    sourceRun = api(repo, `actions/runs/${manifest.build.id}`),
+    artifacts = api(repo, `actions/runs/${manifest.build.id}/artifacts?per_page=100`).artifacts;
+  verifyPublication(
+    manifest,
+    release,
+    verificationRun,
+    sourceRun,
+    artifacts,
+    await tagCommit(repo, manifest.tag),
+  );
+  const expected = [
+    ...manifest.files,
+    { name: 'publication.json', size: bytes.length, sha256: sha256(bytes) },
+  ];
+  verifyRemoteAssets(release, expected);
+  if (release.draft)
+    gh(
+      'api',
+      '--method',
+      'PATCH',
+      `repos/${repo}/releases/${manifest.release_id}`,
+      '-F',
+      'draft=false',
+    );
+  const published = api(repo, `releases/${manifest.release_id}`);
+  verifyPublication(
+    manifest,
+    published,
+    verificationRun,
+    sourceRun,
+    artifacts,
+    await tagCommit(repo, manifest.tag),
+  );
+  verifyRemoteAssets(published, expected);
+  if (published.draft) throw Error('Preview is still a draft');
+  console.log(
+    JSON.stringify(
+      {
+        published: true,
+        url: published.html_url,
+        source_build: manifest.build.id,
+        source_commit: manifest.source_commit,
+        verified_files: expected.length,
+        archives: manifest.archives,
+        owner_published_at: new Date().toISOString(),
+      },
+      null,
+      2,
+    ),
+  );
+}
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.argv[2] === 'prepare') await prepare();
   else if (process.argv[2] === 'publish') await publish(process.argv[3] ?? 'release-assets');
+  else if (process.argv[2] === 'finalize') await finalize(process.argv[3]);
   else throw Error('Usage: publish-release.mjs prepare | publish DIR');
 }
