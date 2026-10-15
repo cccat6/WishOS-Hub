@@ -30,3 +30,5 @@ const char *wishos_lua_error(void){return last_error;}
 size_t wishos_lua_peak(void){return last_peak;}
 int wishos_lua_version(void){return LUA_VERSION_RELEASE_NUM;}
 const char *wishos_lua_version_string(void){return LUA_RELEASE;}
+
+int wishos_lua_depth_limit(void){return LUAI_MAXCCALLS;}

@@ -11,11 +11,11 @@ sources=()
 for file in "$lua_source"/*.c; do
   case "$(basename "$file")" in lua.c|luac.c) ;; *) sources+=("$file");; esac
 done
-emcc -O3 -I "$lua_source" vendor/lua-parser/parser.c "${sources[@]}" \
+emcc -O3 -DLUAI_MAXCCALLS=32 -I "$lua_source" vendor/lua-parser/parser.c "${sources[@]}" \
   --no-entry -s WASM=1 -s ENVIRONMENT=web,worker,node -s MODULARIZE=1 \
   -s ALLOW_MEMORY_GROWTH=1 -s ALLOW_TABLE_GROWTH=1 -s MALLOC=emmalloc \
   -s SUPPORT_LONGJMP=emscripten -s ASSERTIONS=1 -s STACK_SIZE=1048576 \
-  -s EXPORTED_FUNCTIONS='["_malloc","_free","_wishos_lua_check","_wishos_lua_error","_wishos_lua_peak","_wishos_lua_version","_wishos_lua_version_string"]' \
+  -s EXPORTED_FUNCTIONS='["_malloc","_free","_wishos_lua_check","_wishos_lua_error","_wishos_lua_peak","_wishos_lua_version","_wishos_lua_version_string","_wishos_lua_depth_limit"]' \
   -s EXPORTED_RUNTIME_METHODS='["stackSave","stackRestore"]' \
   -o build/lua-parser/parser.js
 cp "$workspace/lua-5.4.8/doc/readme.html" build/lua-parser/lua-readme.html
