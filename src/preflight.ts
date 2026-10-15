@@ -1,3 +1,4 @@
+import { readMounts } from './device-storage.js';
 import { preflightUi } from './preflight-ui.js';
 import { readDeviceFile } from './device-files.js';
 import { Buffer } from 'node:buffer';
@@ -219,8 +220,11 @@ async function checkResolved(
     apps = await describe('/sys/apps');
     if (typeof apps.install_providers === 'string') {
       const transfer = await read('/sys/transfers', 'read'),
-        volumes = await read('/fs', 'mounts');
-      checkApplicationStorage(apps, transfer.policy ?? {}, volumes.providers ?? [], true);
+        volumes = await readMounts(async (path, method, args) => {
+          const result = await read(path, method, args);
+          return { ok: true, boot_id: boot!, result };
+        }, signal);
+      checkApplicationStorage(apps, transfer.policy ?? {}, volumes, true);
     }
   }
   if (options.rpc && ui.length) {

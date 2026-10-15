@@ -1,11 +1,9 @@
+import { readMounts } from './device-storage.js';
 import { ResourceReplyError } from './resource-reply-error.js';
 import { TransportFailure } from './transport-failure.js';
 import { Buffer } from 'node:buffer';
 import type { DeviceRpc } from './os-remote.js';
-import {
-  resolveFiles,
-  type BundleSource,
-} from './bundle-files.js';
+import { resolveFiles, type BundleSource } from './bundle-files.js';
 import { preflightBundle, checkApplicationStorage, type PreflightOptions } from './preflight.js';
 export type { BundleArtifact, BundleReader, BundleSource } from './bundle-files.js';
 export async function deliverBundle(
@@ -88,50 +86,42 @@ export async function deliverBundle(
     };
     // Explicit delivery can prepare/refresh storage; discovery remains read-only.
     const policy = await call('read', {});
-    let volumes = await rpc('/fs', 'mounts', {});
-    if (volumes.ok)
-      for (const target of policy.policy?.targets ?? []) {
-        let volume = volumes.result.providers.find((p: any) => p.id === target.provider);
-        if (!volume) continue;
-        if (!volume.available) {
-          if (!volume.prepare) continue;
-          const result = await prepare(volume.prepare);
-          if (!result.ok) {
-            const error =
-              result.error ?? result.result?.data?.error ?? 'storage_preparation_failed';
-            if (/memory|budget|busy|active|timeout|cancel/.test(error))
-              throw new ResourceReplyError({ ...result, error });
-            const state = await rpc(volume.prepare.path, 'read', {});
-            if (state.ok && state.result.link_ready)
-              throw new ResourceReplyError({ ...result, error: 'storage_volume_unavailable' });
-            continue;
-          }
-          volumes = await rpc('/fs', 'mounts', {});
-          volume = volumes.result.providers.find((p: any) => p.id === target.provider);
+    let volumes = await readMounts(rpc, signal);
+    for (const target of policy.policy?.targets ?? []) {
+      let volume = volumes.find((p: any) => p.id === target.provider);
+      if (!volume) continue;
+      if (!volume.available) {
+        if (!volume.prepare) continue;
+        const result = await prepare(volume.prepare);
+        if (!result.ok) {
+          const error = result.error ?? result.result?.data?.error ?? 'storage_preparation_failed';
+          if (/memory|budget|busy|active|timeout|cancel/.test(error))
+            throw new ResourceReplyError({ ...result, error });
+          const state = await rpc(volume.prepare.path, 'read', {});
+          if (state.ok && state.result.link_ready)
+            throw new ResourceReplyError({ ...result, error: 'storage_volume_unavailable' });
+          continue;
         }
-        if (volume.capacity_refresh && (volume.free_needs_refresh || volume.free_bytes == null)) {
-          const r = await prepare(volume.capacity_refresh);
-          if (!r.ok)
-            throw new ResourceReplyError({
-              ...r,
-              error: r.error ?? 'storage_capacity_unavailable',
-            });
-        }
-        break;
+        volumes = await readMounts(rpc, signal);
+        volume = volumes.find((p: any) => p.id === target.provider);
       }
+      if (volume.capacity_refresh && (volume.free_needs_refresh || volume.free_bytes == null)) {
+        const r = await prepare(volume.capacity_refresh);
+        if (!r.ok)
+          throw new ResourceReplyError({
+            ...r,
+            error: r.error ?? 'storage_capacity_unavailable',
+          });
+      }
+      break;
+    }
     if (preflight.packages.length) {
       const apps = await rpc('/sys/capabilities', 'describe', { path: '/sys/apps' });
       if (!apps.ok) throw new ResourceReplyError(apps);
       if (typeof apps.result.install_providers === 'string') {
         const currentPolicy = await call('read', {}),
-          currentVolumes = await rpc('/fs', 'mounts', {});
-        if (!currentVolumes.ok) throw new ResourceReplyError(currentVolumes);
-        checkApplicationStorage(
-          apps.result,
-          currentPolicy.policy ?? {},
-          currentVolumes.result.providers ?? [],
-          false,
-        );
+          currentVolumes = await readMounts(rpc, signal);
+        checkApplicationStorage(apps.result, currentPolicy.policy ?? {}, currentVolumes, false);
       }
     }
     const start = await call('begin', {

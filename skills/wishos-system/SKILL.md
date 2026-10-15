@@ -17,6 +17,9 @@ description: 使用 WishOS 执行、配置、事件、文件、显示和 AI 等�
 读取实际存储提供者、容量、分区和配额。应用允许安装的卷由 install_providers 声明；
 下载位置另按系统的有序目标策略处理。内部 Flash 回退须显式允许并设置配额。
 预算合规不等于已预留内存或一定能启动，原生准入仍是最终依据。
+目录分页必须读到 more:false；旧设备缺 more 时视为结束。`/fs mounts` 每次用
+cursor/limit 读取 providers，再按 next_cursor 继续。`/sys/storage read` 的 providers
+和 flash_partitions 是两套独立分页，按各自返回游标读取，不把目录读取变成媒体探测/建索引。
 
 应用调用系统 AI API，上游 Hub 管理 Harness 协议。返回 application/system 有序动作，
 由系统解析并执行。轻量请求可用系统网络接口；超出本机预算的下载、解析、索引和绘图

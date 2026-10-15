@@ -564,6 +564,8 @@ test('cloud MCP package tools deliver, await native admission and update whole f
     wire = new WireDevice(),
     native = new PackageDevice();
   native.boot = wire.boot;
+  native.paginatedMounts = true;
+  native.descriptions['/sys/apps'].install_providers = 'card';
   wire.descriptions = native.descriptions;
   wire.resourceHandler = (c) => native.call(c);
   const call = async (name: string, args: any) => {
@@ -629,6 +631,9 @@ test('cloud MCP package tools deliver, await native admission and update whole f
     );
     assert.equal(update.state, 'installed');
     assert.equal(native.revision, 2);
+    assert(
+      native.calls.some((c) => c.path === '/fs' && c.method === 'mounts' && c.args.cursor === 4),
+    );
     assert(update.copied_files.includes('small.bin'));
     assert.equal(native.files.get('/card/revisions/2/main.lua')!.toString(), 'return {version=2}');
     assert.equal(native.ticket, undefined);
@@ -675,6 +680,13 @@ test('cloud MCP package tools deliver, await native admission and update whole f
     assert.equal(explicit.state, 'activated');
     assert.equal(explicit.revision, 4);
     assert.equal(explicit.receipts.runtime_stop.loaded, false);
+    const mounted = native.calls.findIndex((c) => c.path === '/dev/media' && c.method === 'mount');
+    assert(mounted >= 0);
+    assert(
+      native.calls
+        .slice(mounted + 1)
+        .some((c) => c.path === '/fs' && c.method === 'mounts' && c.args.cursor === 4),
+    );
     assert.equal(
       native.calls.filter((c) => c.path === '/sys/runtime' && c.method === 'stop').length,
       1,

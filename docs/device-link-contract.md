@@ -77,3 +77,21 @@ ordinary recovery application. Helpers retain `/system/lib/input.lua` and
 the OS repository. Hub guidance ships references, not another copy of the runtime
 libraries. The new native source pin and joint acceptance are pending the terminal
 owner's final commit; published old-release evidence remains unchanged.
+
+
+## Storage catalog pagination
+
+Hub internal placement/preparation starts `/fs mounts` without page arguments
+(new devices default to four rows), then follows `next_cursor` using
+`{cursor,limit:4}` until `more` is false. The first call also works on older
+devices that reject page arguments. A missing
+`more` ends enumeration for older devices. A failed page or boot change rejects
+the enumeration rather than presenting a partial/empty catalog as success.
+The same reader is used before and after preparation and in package preflight.
+
+`/sys/storage read` independently pages providers via cursor/limit and
+flash_partitions via partition_cursor/partition_limit. Generic resource callers
+follow the corresponding returned cursors and more flags; Hub's ordinary package
+preflight does not need this combined resource. Reading these catalogs neither
+mounts/probes media nor builds an index, and it does not change installation or
+download permissions. Local and cloud MCP share this mechanism.

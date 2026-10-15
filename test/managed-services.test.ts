@@ -24,11 +24,13 @@ test('staging streams on server and transfers verified chunks without source URL
         ok: true,
         boot_id: 'b',
         result:
-          method === 'begin'
-            ? { id: 1, chunk_bytes: 1024 }
-            : method === 'commit'
-              ? { root: '/card/downloads/v1' }
-              : {},
+          method === 'mounts'
+            ? { providers: [] }
+            : method === 'begin'
+              ? { id: 1, chunk_bytes: 1024 }
+              : method === 'commit'
+                ? { root: '/card/downloads/v1' }
+                : {},
       };
     };
     const result = await store.deliver(
@@ -63,17 +65,19 @@ test('application AI response and large data reference are separated from system
       ok: true,
       boot_id: 'b',
       result:
-        m === 'describe'
-          ? {
-              result_format: 'wishos-result/2',
-              action_limit_bytes: 2048,
-              inline_result_limit_bytes: 1536,
-            }
-          : m === 'begin'
-            ? { id: 2, chunk_bytes: 1024 }
-            : m === 'commit'
-              ? { root: '/card/reply' }
-              : {},
+        m === 'mounts'
+          ? { providers: [] }
+          : m === 'describe'
+            ? {
+                result_format: 'wishos-result/2',
+                action_limit_bytes: 2048,
+                inline_result_limit_bytes: 1536,
+              }
+            : m === 'begin'
+              ? { id: 2, chunk_bytes: 1024 }
+              : m === 'commit'
+                ? { root: '/card/reply' }
+                : {},
     });
     const route = managedAgentRoute({
       rpc,
@@ -282,17 +286,19 @@ test('application and system actions share one verified bundle and retain their 
         ok: true,
         boot_id: 'b',
         result:
-          method === 'describe'
-            ? {
-                result_format: 'wishos-result/2',
-                action_limit_bytes: 2048,
-                inline_result_limit_bytes: 1536,
-              }
-            : method === 'begin'
-              ? { id: 4, chunk_bytes: 1024 }
-              : method === 'commit'
-                ? { root: '/card/result' }
-                : {},
+          method === 'mounts'
+            ? { providers: [] }
+            : method === 'describe'
+              ? {
+                  result_format: 'wishos-result/2',
+                  action_limit_bytes: 2048,
+                  inline_result_limit_bytes: 1536,
+                }
+              : method === 'begin'
+                ? { id: 4, chunk_bytes: 1024 }
+                : method === 'commit'
+                  ? { root: '/card/result' }
+                  : {},
       };
     };
     const actions = [
@@ -352,7 +358,12 @@ test('cancelled delivery still sends its cleanup RPC after the transfer signal a
       return {
         ok: true,
         boot_id: 'b',
-        result: method === 'begin' ? { id: 3, chunk_bytes: 1024 } : {},
+        result:
+          method === 'mounts'
+            ? { providers: [] }
+            : method === 'begin'
+              ? { id: 3, chunk_bytes: 1024 }
+              : {},
       };
     };
     await assert.rejects(

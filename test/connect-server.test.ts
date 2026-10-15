@@ -235,6 +235,8 @@ test('local MCP package admission and device-selected component discovery use th
     native = new PackageDevice(),
     client = new Client({ name: 'package-local', version: '1' });
   native.boot = wire.boot;
+  native.paginatedMounts = true;
+  native.descriptions['/sys/apps'].install_providers = 'card';
   wire.descriptions = native.descriptions;
   wire.board = {
     component_index: { format: 'wishos-components/1', file: '/system/components.json' },
@@ -332,7 +334,17 @@ test('local MCP package admission and device-selected component discovery use th
     );
     assert.equal(updated.state, 'activated');
     assert.equal(updated.receipts.runtime_stop.loaded, false);
+    const mounted = native.calls.findIndex((c) => c.path === '/dev/media' && c.method === 'mount');
+    assert(mounted >= 0);
+    assert(
+      native.calls
+        .slice(mounted + 1)
+        .some((c) => c.path === '/fs' && c.method === 'mounts' && c.args.cursor === 4),
+    );
     assert.equal(native.revision, 2);
+    assert(
+      native.calls.some((c) => c.path === '/fs' && c.method === 'mounts' && c.args.cursor === 4),
+    );
   } finally {
     await client.close();
     await wire.close();

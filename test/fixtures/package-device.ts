@@ -19,6 +19,7 @@ export class PackageDevice {
   failActivation = false;
   preparationNeedsIdle = false;
   preparationReady = false;
+  paginatedMounts = false;
   failPreparationAfterStop = false;
   activationCompletionError?: string;
   pendingApplication?: string;
@@ -123,18 +124,25 @@ export class PackageDevice {
       }
     }
     if (path === '/fs') {
-      if (method === 'mounts')
-        return {
-          providers: this.preparationNeedsIdle
-            ? [
-                {
-                  id: 'card',
-                  available: this.preparationReady,
-                  prepare: { path: '/dev/media', method: 'mount', args: {} },
-                },
-              ]
-            : [],
+      if (method === 'mounts') {
+        const card = {
+          id: 'card',
+          available: !this.preparationNeedsIdle || this.preparationReady,
+          prepare: { path: '/dev/media', method: 'mount', args: {} },
         };
+        if (!this.paginatedMounts) return { providers: this.preparationNeedsIdle ? [card] : [] };
+        const providers = [
+            ...Array.from({ length: 4 }, (_, i) => ({ id: 'other-' + i, available: true })),
+            card,
+          ],
+          cursor = a.cursor ?? 0,
+          next = Math.min(providers.length, cursor + (a.limit ?? 4));
+        return {
+          providers: providers.slice(cursor, next),
+          next_cursor: next,
+          more: next < providers.length,
+        };
+      }
       const bytes = this.files.get(a.file);
       if (!bytes) throw Error('file_not_found');
       if (method === 'stat') return { directory: false, size: String(bytes.length) };
@@ -193,7 +201,10 @@ export class PackageDevice {
           state: t?.state ?? 'idle',
           id: t?.id,
           files_complete: t?.files_complete,
-          policy: { targets: this.preparationNeedsIdle ? [{ provider: 'card' }] : [] },
+          policy: {
+            targets:
+              this.preparationNeedsIdle || this.paginatedMounts ? [{ provider: 'card' }] : [],
+          },
         };
       }
       if (!t || a.id !== t.id) throw Error('transfer_id');

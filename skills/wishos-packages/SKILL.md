@@ -22,7 +22,8 @@ UI 预检按所选 renderer 的词汇和限制；on_start 可注册字体，结�
 预检不执行 on_start、不证明任意程序语义、不预留 heap，也不保证之后一定能激活。
 
 先读 `/sys/apps describe.install_providers` 确认应用安装卷，再读 `/sys/transfers` 有序目标、
-`/fs mounts` 和配额。用户应用/替代 Launcher 优先按设备包的 SD 策略放置；只有设备明确
+`/fs mounts` 和配额；mounts 按 next_cursor 连续读取到 more:false，不能只看第一页。
+用户应用/替代 Launcher 优先按设备包的 SD 策略放置；只有设备明确
 允许且配置了内部 Flash 目标和配额才能回退，不按 MCU 型号或容量猜测。
 初始 Launcher 与用户应用同层，也是可管理文件系统中的目录包；更新仍使用新 revision、
 租约和索引切换。设备包的初始引用不等于开放该卷的用户安装权限。C6 的用户安装许可
