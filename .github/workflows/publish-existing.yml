@@ -8,6 +8,9 @@ on:
       tag:
         description: Existing preview tag for the exact source commit
         required: true
+      release_id:
+        description: Numeric preview release ID; remains stable while draft
+        required: true
       replace_existing:
         description: Explicitly replace an existing preview with the selected artifact set
         type: boolean
@@ -25,6 +28,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       RUN_ID: ${{ inputs.run_id }}
       RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_ID: ${{ inputs.release_id }}
       REPLACE_EXISTING: ${{ inputs.replace_existing }}
     steps:
       - uses: actions/checkout@v4

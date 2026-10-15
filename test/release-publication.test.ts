@@ -9,7 +9,8 @@ import {
   verifyArchiveManifest,
   verifyRemoteAssets,
   sha256,
-  selectReleaseId,
+  validatePreviewIdentity,
+  releaseVisibility,
   uploadAsset,
 } from '../scripts/publish-release.mjs';
 const commit = 'a'.repeat(40);
@@ -85,12 +86,32 @@ test('a stale per-file manifest or aggregate generation cannot be accepted by ch
   );
 });
 
-test('draft and published release lookup retains one immutable release identity', () => {
-  assert.equal(selectReleaseId([414006214]), 414006214);
-  assert.throws(() => selectReleaseId([]), /exactly one release/);
-  assert.throws(() => selectReleaseId([414006214, 414006215]), /exactly one release/);
+test('both visibility transitions retain the explicit release ID, tag and source commit', () => {
+  const plan = { release_id: 414006214, tag: 'v0.4.0-preview.1', source_commit: commit };
+  const original = { id: plan.release_id, tag_name: plan.tag, prerelease: true, draft: false };
+  // GitHub can reset tag_name on draft edits when it is omitted from the patch.
+  const patch = (state: any, fields: any) => ({
+    ...state,
+    tag_name: fields.tag_name ?? 'untagged',
+    ...fields,
+  });
+  const draft = patch(original, releaseVisibility(plan, true));
+  validatePreviewIdentity(draft, { id: plan.release_id, tag: plan.tag });
+  assert.equal(draft.draft, true);
+  assert.equal(draft.target_commitish, commit);
+  const published = patch(draft, releaseVisibility(plan, false));
+  validatePreviewIdentity(published, { id: plan.release_id, tag: plan.tag });
+  assert.equal(published.draft, false);
+  assert.throws(
+    () =>
+      validatePreviewIdentity(
+        { ...draft, tag_name: 'untagged' },
+        { id: plan.release_id, tag: plan.tag },
+      ),
+    /identity/,
+  );
+  assert.throws(() => validatePreviewIdentity(draft, { id: 999, tag: plan.tag }), /identity/);
 });
-
 test('draft asset upload uses its release ID, streams original bytes and validates the upload receipt', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wishos-release-upload-')),
     bytes = Buffer.from([0, 255, 128, 64, 1, 2, 3]),
