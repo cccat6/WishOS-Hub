@@ -9,7 +9,7 @@ import { Hub } from '../src/hub.js';
 import { Store } from '../src/store.js';
 import { MockAdapter } from '../src/adapters/mock.js';
 import { validRaster, MAX_STREAM_RASTER_BYTES } from '../src/raster.js';
-const raster = createRequire(import.meta.url)('../../web/device/raster.js');
+const raster = createRequire(import.meta.url)('./fixtures/legacy-device-raster.cjs');
 let seed = 19;
 const pixels = Uint8Array.from({ length: 480 * 720 }, () => {
   seed = (Math.imul(seed, 1103515245) + 12345) >>> 0;
