@@ -775,3 +775,47 @@ test('a persisted failed activation job retains successful installation and neve
     await f.close();
   }
 });
+
+test('a lost install response stays uncertain even if the device committed the catalog', async () => {
+  const { PackageDevice } = await import('./fixtures/package-device.js'),
+    { deployPackage } = await import('../src/packages.js'),
+    { ResourceJobs } = await import('../src/resource-jobs.js'),
+    { HostJobStore } = await import('../src/connect/job-store.js');
+  const f = await fixture(),
+    db = new DatabaseSync(':memory:'),
+    jobs = new ResourceJobs(new HostJobStore(db)),
+    d = new PackageDevice();
+  try {
+    const p = await packageFiles(f.source);
+    const rpc: DeviceRpc = async (path, method, args) => {
+      const reply = await d.rpc(path, method, args);
+      if (path === '/sys/apps' && method === 'install' && reply.ok)
+        throw Error('device_disconnected');
+      return reply;
+    };
+    jobs.submit('lost-install', 'same-files', 'package_deploy', (s) =>
+      deployPackage(f.source, p.files, rpc, d.boot, {
+        compiler: nodeLuaCompiler,
+        signal: s,
+        activate: true,
+      }),
+    );
+    await jobs.wait('lost-install');
+    const uncertain = jobs.read('lost-install');
+    assert.equal(uncertain.state, 'unknown');
+    assert.equal(d.revision, 1);
+    assert.equal(d.active, 'original');
+    assert.equal((uncertain.receipts!.install as any).state, 'requesting');
+    assert(!d.calls.some((c) => c.path === '/sys/operations' && c.method === 'request'));
+    let replayed = 0;
+    jobs.submit('lost-install', 'same-files', 'package_deploy', async () => {
+      replayed++;
+      return {};
+    });
+    assert.equal(replayed, 0);
+  } finally {
+    await jobs.close();
+    db.close();
+    await f.close();
+  }
+});

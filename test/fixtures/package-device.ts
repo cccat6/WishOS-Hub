@@ -50,6 +50,7 @@ export class PackageDevice {
       methods: 'read,load,validate',
       read_methods: 'read',
       engine: 'lua-5.4.8',
+      memory_budget_semantics: 'elastic_limit_with_checked_actual_growth',
       entry_source_limit_bytes: 65536,
       budgets: { memory_bytes: { minimum: 16384, maximum: 260000 } },
     },

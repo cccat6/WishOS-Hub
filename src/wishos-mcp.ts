@@ -149,7 +149,7 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
   );
   tool(
     'read_resource_job',
-    'Read staging, image preparation or delivery result. Completed staging returns artifact ID; a delivery receipt is not display completion.',
+    'Read preparation, transfer or package job results. Job completion is separate from application activation and physical output. Inspect result.state and receipts: a failed activation job can retain a committed install; reconcile an unknown outcome before retrying.',
     { id: z.string() },
     (input) => api('/api/os/jobs/read', input),
   );

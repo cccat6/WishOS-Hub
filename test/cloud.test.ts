@@ -632,6 +632,31 @@ test('cloud MCP package tools deliver, await native admission and update whole f
     assert(update.copied_files.includes('small.bin'));
     assert.equal(native.files.get('/card/revisions/2/main.lua')!.toString(), 'return {version=2}');
     assert.equal(native.ticket, undefined);
+    assert.equal(
+      prepared.preflight.limits.runtime_memory_budget_semantics,
+      'elastic_limit_with_checked_actual_growth',
+    );
+    native.activationCompletionError = 'script_load_failed';
+    const failedRequest = await call('update_package', {
+      device_id: 'device',
+      expected_boot_id: wire.boot,
+      application_id: 'relay-app',
+      expected_revision: 2,
+      replacements: [await stage('main.lua', 'return {version=3}')],
+      activate: true,
+    });
+    const failed = await eventually(async () => {
+      const job = await call('read_resource_job', { id: failedRequest.id });
+      return job.state === 'failed' ? job : false;
+    }, 20000);
+    assert.equal(failed.receipts.install.revision, 3);
+    assert.equal(failed.receipts.activation.data.error, 'script_load_failed');
+    assert.equal(native.revision, 3);
+    assert.equal(native.active, 'relay-app');
+    assert.equal(
+      native.calls.filter((c) => c.path === '/sys/operations' && c.method === 'request').length,
+      2,
+    );
   } finally {
     await client.close();
     await wire.close();
