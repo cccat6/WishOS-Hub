@@ -95,6 +95,8 @@ test('HTTP RPC: consecutive compressed recordings reach one Harness session as a
       }
     } else if (a.path === '/dev/mic') {
       const id = a.args.recording_id;
+      if (a.method === 'read_chunk' && a.args.after_sequence !== undefined)
+        ack.set(id, a.args.after_sequence);
       if (a.method === 'read' || a.method === 'read_chunk') {
         result = {
           recording_id: id,

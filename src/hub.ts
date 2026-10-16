@@ -12,7 +12,7 @@ import { managedAgentRoute, managedPrompt } from './os-agent.js';
 import { OsRpcSocket } from './os-rpc-socket.js';
 import { OsRemoteBridge, deviceRpc, type DeviceRpc, type RemoteHandler } from './os-remote.js';
 import { SqlRemoteJournal } from './os-journal.js';
-import { voiceRoute } from './os-voice-route.js';
+import { voiceRoute, type AudioDeliveryProgress } from './os-voice-route.js';
 import { OsAudioIngress, AudioLimits, type AudioConfig } from './os-audio-ingress.js';
 import { SpeechSettings } from './speech.js';
 import { McpHttp } from './mcp-http.js';
@@ -40,6 +40,7 @@ export interface HubOptions {
   asr?: Asr;
   speech?: unknown;
   audioLimits?: Partial<typeof AudioLimits>;
+  remotePolling?: { intervalMs: number; maxPauseMs: number };
   artifactRoot?: string;
   artifactPolicy?: { maxStoredBytes: number; ttlMs: number };
   artifactMaxBytes?: number;
@@ -120,6 +121,7 @@ export class Hub {
   private artifacts: ArtifactStore;
   readonly resourceJobs: ResourceJobs;
   private osVoiceBindings = new Map<string, VoiceLane>();
+  private audioDelivery = new Map<string, AudioDeliveryProgress>();
   private approvals = new Map<
     string,
     { device: string; run: string; adapter: HarnessAdapter; native: string; request: unknown }
@@ -200,6 +202,15 @@ export class Hub {
   }
 
   constructor(private options: HubOptions) {
+    const polling = options.remotePolling;
+    if (
+      polling &&
+      (!Number.isSafeInteger(polling.intervalMs) ||
+        polling.intervalMs < 1 ||
+        !Number.isSafeInteger(polling.maxPauseMs) ||
+        polling.maxPauseMs < polling.intervalMs)
+    )
+      throw Error('remote_polling_policy');
     this.resourceJobs =
       options.resourceJobs ?? new ResourceJobs(new HostJobStore(options.store.db));
     this.artifacts = new ArtifactStore(
@@ -344,12 +355,27 @@ export class Hub {
     agent.replaySafe = true;
     const handlers: Record<string, RemoteHandler> = {
       agent,
-      voice: voiceRoute(bound, async (id, action, args) => {
-        if (action === 'begin') return this.beginOsAudio(d.id, id, args as AudioConfig);
-        if (action === 'chunks') return this.osAudio.append(d.id, id, args!.chunks as any);
-        if (action === 'finish') return this.osAudio.finish(d.id, id, args as any);
-        return this.osAudio.status(d.id, id);
-      }),
+      voice: voiceRoute(
+        bound,
+        async (id, action, args) => {
+          if (action === 'begin') return this.beginOsAudio(d.id, id, args as AudioConfig);
+          if (action === 'chunks') return this.osAudio.append(d.id, id, args!.chunks as any);
+          if (action === 'finish') return this.osAudio.finish(d.id, id, args as any);
+          if (action === 'abort') return this.osAudio.abortUpload(d.id, id, args!.error as string);
+          return this.osAudio.status(d.id, id);
+        },
+        {
+          onProgress: (progress) => {
+            const current = this.audioDelivery.get(d.id);
+            if (
+              !current ||
+              current.recording_id === progress.recording_id ||
+              (progress.phase === 'receiving' && progress.reads === 0)
+            )
+              this.audioDelivery.set(d.id, progress);
+          },
+        },
+      ),
     };
     handlers['wishos.ai'] = managedAgentRoute({
       rpc: bound,
@@ -374,26 +400,46 @@ export class Hub {
         journal: new SqlRemoteJournal(this.options.store.db, d.id),
       }),
       abort = new AbortController();
-    const timer = setInterval(() => {
-      if (!this.stopping) void bridge.poll(abort.signal).catch(() => {});
-    }, 100);
-    timer.unref();
     const entry = {
       rpc: bound,
       bridge,
       socket,
       boot: socket?.boot ?? '',
       online: !!socket,
-      timer,
+      timer: undefined as unknown as NodeJS.Timeout,
       abort,
     };
     this.osPeers.set(d.id, entry);
+    const poll = async () => {
+      const began = performance.now();
+      try {
+        await bridge.poll(abort.signal);
+      } catch {
+        /* The next scan reconciles the same identities. */
+      }
+      if (this.stopping || abort.signal.aborted || this.osPeers.get(d.id) !== entry) return;
+      // On a slow, single-window link repeated outbox scans must leave airtime
+      // for the running handlers (notably continuous compressed audio). Scale
+      // the scan pause to observed scan cost instead of saturating a fixed tick.
+      const policy = this.options.remotePolling ?? { intervalMs: 100, maxPauseMs: 1000 };
+      const pause = Math.min(
+        policy.maxPauseMs,
+        Math.max(
+          policy.intervalMs,
+          bridge.pendingCount ? (performance.now() - began) * 3 : policy.intervalMs,
+        ),
+      );
+      entry.timer = setTimeout(poll, pause);
+      entry.timer.unref();
+    };
+    entry.timer = setTimeout(poll, 0);
+    entry.timer.unref();
     socket?.once('closed', () => {
       if (this.osPeers.get(d.id) !== entry) return;
       entry.online = false;
       abort.abort();
       bridge.close();
-      clearInterval(timer);
+      clearTimeout(entry.timer);
       this.osPeers.delete(d.id);
     });
   }
@@ -411,6 +457,7 @@ export class Hub {
       harness_capabilities: d.adapter.capabilities,
       active_run: this.busy.get(id) ?? null,
       pending_voice: this.osAudio.pending(id),
+      audio_delivery: this.audioDelivery.get(id) ?? null,
     };
   }
   private device(id: string): DeviceConfig {
@@ -739,7 +786,7 @@ export class Hub {
         [...this.devices.keys()].map((id) => this.state(id)),
       );
     const audio = u.pathname.match(
-      /^\/api\/devices\/([a-zA-Z0-9_.:-]+)\/audio\/([a-zA-Z0-9_.:-]+)(?:\/(begin|chunks|finish|retry))?$/,
+      /^\/api\/devices\/([a-zA-Z0-9_.:-]+)\/audio\/([a-zA-Z0-9_.:-]+)(?:\/(begin|chunks|finish|retry|abort))?$/,
     );
     if (audio) {
       const id = audio[1]!,
@@ -752,6 +799,7 @@ export class Hub {
       if (action === 'begin') return reply(res, 200, this.beginOsAudio(id, stream, data));
       if (action === 'chunks') return reply(res, 200, this.osAudio.append(id, stream, data.chunks));
       if (action === 'retry') return reply(res, 202, this.osAudio.retry(id, stream));
+      if (action === 'abort') return reply(res, 200, this.osAudio.abortUpload(id, stream, data.error));
       if (action === 'finish') return reply(res, 202, this.osAudio.finish(id, stream, data));
       throw new HttpError(404, 'audio_operation');
     }

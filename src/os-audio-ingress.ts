@@ -243,6 +243,30 @@ export class OsAudioIngress {
     }
     return { stored: true, durable: true, ...this.status(device, id) };
   }
+  abortUpload(device: string, id: string, error: string) {
+    if (typeof error !== 'string' || !error.length || error.length > 160)
+      throw new AudioError('audio_abort_reason');
+    const row = this.row(device, id);
+    if (!row) throw new AudioError('audio_not_found');
+    // Only an unfinished upload is owned by the collector. ASR/Harness work
+    // already admitted has its own receipt and cannot be undone by this path.
+    if (row.state !== 'receiving') return this.status(device, id);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db
+        .prepare(
+          "UPDATE os_audio_streams SET state='failed',receipt=?,bytes=0,updated=? WHERE device=? AND id=?",
+        )
+        .run(JSON.stringify({ error }), Date.now(), device, id);
+      this.db.prepare('DELETE FROM os_audio_blocks WHERE device=? AND id=?').run(device, id);
+      this.db.exec('COMMIT');
+    } catch (failure) {
+      this.db.exec('ROLLBACK');
+      throw failure;
+    }
+    this.kick(device);
+    return this.status(device, id);
+  }
   finish(device: string, id: string, final: AudioFinal) {
     const row = this.row(device, id);
     if (!row) throw new AudioError('audio_not_found');

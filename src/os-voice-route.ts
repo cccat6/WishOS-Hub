@@ -13,6 +13,20 @@ export type AudioApi = (
   args?: Record<string, unknown>,
   signal?: AbortSignal,
 ) => Promise<any>;
+export type AudioDeliveryProgress = {
+  recording_id: string;
+  phase: 'receiving' | 'drained' | 'accepted' | 'failed';
+  elapsed_ms: number;
+  reads: number;
+  blocks: number;
+  acknowledged_sequence: number;
+  read_ms: number;
+  max_read_ms: number;
+  max_ack_gap_ms: number;
+  device_dropped_samples: string;
+  error?: string;
+  cleanup_error?: string;
+};
 const pause = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
     if (signal.aborted) {
@@ -32,7 +46,11 @@ const pause = (ms: number, signal: AbortSignal) =>
 export function voiceRoute(
   rpc: DeviceRpc,
   api: AudioApi,
-  options: { pollMs?: number; batchBlocks?: number } = {},
+  options: {
+    pollMs?: number;
+    batchBlocks?: number;
+    onProgress?: (progress: AudioDeliveryProgress) => void;
+  } = {},
 ): RemoteHandler {
   const state = new Map<string, { id: string; rate: number }>();
   const device = async (method: string, args: Record<string, unknown>) => {
@@ -82,6 +100,33 @@ export function voiceRoute(
   const handler: RemoteHandler = async (r, signal) => {
     const id = identity(r);
     if (!state.has(r.request_id)) await admit(r, signal);
+    const started = performance.now();
+    let lastAck = started;
+    const progress: AudioDeliveryProgress = {
+      recording_id: id,
+      phase: 'receiving',
+      elapsed_ms: 0,
+      reads: 0,
+      blocks: 0,
+      acknowledged_sequence: 0,
+      read_ms: 0,
+      max_read_ms: 0,
+      max_ack_gap_ms: 0,
+      device_dropped_samples: '0',
+    };
+    const publish = () => {
+      progress.elapsed_ms = Math.round(performance.now() - started);
+      options.onProgress?.({ ...progress });
+    };
+    const acknowledged = (sequence: number) => {
+      if (sequence > progress.acknowledged_sequence) {
+        const now = performance.now();
+        progress.max_ack_gap_ms = Math.max(progress.max_ack_gap_ms, Math.round(now - lastAck));
+        lastAck = now;
+        progress.acknowledged_sequence = sequence;
+      }
+    };
+    publish();
     let archive = typeof r.payload.file === 'string' ? r.payload.file : '',
       retention = 'off';
     const saved = async (method: string, args: Record<string, unknown>) => {
@@ -93,13 +138,42 @@ export function voiceRoute(
       let status = await api(id, '', undefined, signal);
       if (status.state === 'receiving') {
         let capture: any;
+        let pendingAck: number | undefined,
+          piggyback = true;
         for (;;) {
           signal.throwIfAborted();
           try {
-            capture = await device('read_chunk', {
+            const began = performance.now();
+            const args: Record<string, unknown> = {
               recording_id: id,
               limit: options.batchBlocks ?? 16,
-            });
+              ...(piggyback && pendingAck !== undefined ? { after_sequence: pendingAck } : {}),
+            };
+            try {
+              capture = await device('read_chunk', args);
+            } catch (error) {
+              // Older adapters explicitly reject the optional read/ack field before
+              // effects. Never retry an unknown transport outcome as a legacy read.
+              if (
+                !('after_sequence' in args) ||
+                !(error instanceof Error) ||
+                !['unknown_mic_argument', 'unknown_argument'].includes(error.message)
+              )
+                throw error;
+              piggyback = false;
+              await device('ack', { recording_id: id, next_sequence: pendingAck });
+              acknowledged(pendingAck!);
+              capture = await device('read_chunk', {
+                recording_id: id,
+                limit: options.batchBlocks ?? 16,
+              });
+            }
+            if (piggyback && pendingAck !== undefined) acknowledged(pendingAck);
+            pendingAck = undefined;
+            progress.reads++;
+            progress.read_ms = Math.round(performance.now() - began);
+            progress.max_read_ms = Math.max(progress.max_read_ms, progress.read_ms);
+            progress.device_dropped_samples = capture.dropped_samples ?? '0';
           } catch (error) {
             if (!(error instanceof Error) || error.message !== 'recording_not_found' || !archive)
               throw error;
@@ -118,9 +192,30 @@ export function voiceRoute(
           if (capture.chunks.length) {
             status = await api(id, 'chunks', { chunks: capture.chunks }, signal);
             if (status.durable !== true) throw Error('audio_durable_receipt_required');
-            await device('ack', { recording_id: id, next_sequence: capture.offered_sequence });
+            progress.blocks += capture.chunks.length;
+            pendingAck = capture.offered_sequence;
+            if (!piggyback) {
+              await device('ack', { recording_id: id, next_sequence: pendingAck });
+              acknowledged(pendingAck!);
+              pendingAck = undefined;
+            }
           }
-          if (!capture.recording && !capture.chunks.length && !capture.storage_pending) break;
+          publish();
+          // A stopped snapshot with its whole remaining queue already durable
+          // needs a final ACK, not another network round trip for an empty read.
+          const drained =
+            !capture.chunks.length ||
+            (Number.isInteger(capture.buffered_chunks) &&
+              capture.chunks.length >= capture.buffered_chunks);
+          if (!capture.recording && drained && !capture.storage_pending) {
+            if (pendingAck !== undefined) {
+              await device('ack', { recording_id: id, next_sequence: pendingAck });
+              acknowledged(pendingAck);
+            }
+            progress.phase = 'drained';
+            publish();
+            break;
+          }
           if (!capture.chunks.length) await pause(options.pollMs ?? 20, signal);
         }
         // Optional archive replay fills RAM/network gaps. It uses its existing block
@@ -179,11 +274,25 @@ export function voiceRoute(
         if (!(error instanceof Error) || error.message !== 'recording_not_found')
           cleanupError = error instanceof Error ? error.message : String(error);
       }
+      progress.phase = 'accepted';
+      publish();
       return {
         state: 'accepted',
         ...status.result,
         ...(cleanupError ? { cleanup_error: cleanupError, archive } : {}),
       };
+    } catch (error) {
+      progress.phase = 'failed';
+      progress.error = error instanceof Error ? error.message : String(error);
+      if (!(error instanceof RetryableRemoteError) && !signal.aborted) {
+        try {
+          await api(id, 'abort', { error: progress.error.slice(0, 160) }, signal);
+        } catch (cleanup) {
+          progress.cleanup_error = cleanup instanceof Error ? cleanup.message : String(cleanup);
+        }
+      }
+      publish();
+      throw error;
     } finally {
       state.delete(r.request_id);
     }

@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import { AcpAdapter, type AgentRpc } from '../src/adapters/acp.js';
 import { RunnerHttpAdapter } from '../src/adapters/runner-http.js';
 import { DeviceRoutes } from '../src/connect/routes.js';
+import { TransportFailure } from '../src/transport-failure.js';
 import { ConnectorConfig } from '../src/connect/config.js';
 class RpcFixture extends EventEmitter implements AgentRpc {
   calls: { method: string; params: any }[] = [];
@@ -69,6 +70,41 @@ test('runner continuation keeps session and authorization on the user host', asy
   assert.equal(calls[0].headers.Authorization, 'Bearer private-runner-key');
   assert(calls[0].headers['Idempotency-Key']);
   delete process.env.WISHOS_TEST_RUNNER;
+});
+test('local queue refusals keep the paired route and do not replay or force a reconnect', async () => {
+  const routes = new DeviceRoutes('device');
+  let refusal: string | undefined,
+    closed = 0,
+    relay = 0;
+  routes.attach(
+    'lan',
+    async () => {
+      if (refusal) throw new TransportFailure(refusal, false);
+      return { boot_id: 'boot', ok: true, result: {} };
+    },
+    'boot',
+    () => {
+      closed++;
+    },
+  );
+  routes.attach(
+    'relay',
+    async () => {
+      relay++;
+      return { boot_id: 'boot', ok: true, result: {} };
+    },
+    'boot',
+  );
+  for (const code of ['rpc_backpressure', 'rpc_queue_timeout', 'rpc_message_limit']) {
+    refusal = code;
+    await assert.rejects(routes.rpc('/dev/mic', 'read_chunk', {}), new RegExp(code));
+    assert.equal(routes.status().route, 'lan');
+  }
+  refusal = undefined;
+  assert((await routes.rpc('/dev/mic', 'read_chunk', {})).ok);
+  assert.equal(relay, 0);
+  assert.equal(closed, 0);
+  routes.close();
 });
 test('LAN is preferred, failed mutations are not replayed and a new boot is detected', async () => {
   const routes = new DeviceRoutes('device');

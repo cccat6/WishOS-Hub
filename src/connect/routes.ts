@@ -45,7 +45,11 @@ export class DeviceRoutes {
       if (response.boot_id !== route.boot) throw Error('device_boot_changed');
       return response;
     } catch (error) {
-      if (this.routes.get(name)?.generation === route.generation) {
+      const localRefusal =
+        error instanceof TransportFailure &&
+        !error.dispatched &&
+        ['rpc_backpressure', 'rpc_queue_timeout', 'rpc_message_limit'].includes(error.message);
+      if (!localRefusal && this.routes.get(name)?.generation === route.generation) {
         this.routes.delete(name);
         route.close?.();
       }

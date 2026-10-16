@@ -132,3 +132,37 @@ test('speech adapter resampling preserves a voice-band tone and yields to other 
   }
   assert.ok(error / energy < 0.001);
 });
+test('a terminal collector failure immediately unblocks the next upload without cancelling admitted work', async () => {
+  const db = new DatabaseSync(':memory:');
+  const executions: string[] = [];
+  let finish!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const service = new OsAudioIngress(db, async (_d, id) => {
+    executions.push(id);
+    await gate;
+    return { run_id: 'run-' + id };
+  });
+  try {
+    service.begin('d', 'expired-device-tail', { sample_rate: 16000 });
+    service.append('d', 'expired-device-tail', [chunk(0)]);
+    service.begin('d', 'next', { sample_rate: 16000 });
+    service.append('d', 'next', [chunk(0)]);
+    service.finish('d', 'next', { produced_samples: '160', capture_failed: false });
+    assert.deepEqual(executions, []);
+    const aborted = service.abortUpload('d', 'expired-device-tail', 'recording_not_found');
+    assert.equal(aborted.state, 'failed');
+    assert.equal(aborted.bytes, 0);
+    await until(() => executions.length === 1);
+    assert.deepEqual(executions, ['next']);
+    assert.equal(service.abortUpload('d', 'next', 'late-collector-error').state, 'processing');
+    finish();
+    await until(() => service.status('d', 'next').state === 'accepted');
+    assert.equal(service.status('d', 'next').result.run_id, 'run-next');
+  } finally {
+    finish();
+    await service.close();
+    db.close();
+  }
+});
