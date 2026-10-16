@@ -4,6 +4,8 @@ description: 使用 WishOS 执行、配置、事件、文件、显示和 AI 等�
 ---
 
 先发现资源方法、配置作用域、desired/applied 状态、异步完成方式和限制。
+Flash/文件系统及默认发行细节读 get_guidance 的 system-runtime、hardware-packages；
+包格式的完整契约读 package-contract。这些是固定版本参考，当前设备元数据为调用依据。
 硬件事实、驱动默认值、资源策略与应用行为各自独立，不能把某设备的数值写成全局规则。
 
 系统负责加载和调度、准入、配置、事件/条件、回调、文件、UI 解析/布局/字体图像渲染、

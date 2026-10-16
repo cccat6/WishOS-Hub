@@ -34,12 +34,10 @@ For extended fonts, use `/sys/ui font_register` with `{id,file,size}`. The curre
 `/sys/runtime load {file,memory_bytes,instruction_budget}` loads Lua 5.4.8 source. Module loading must not invoke system operations: put them in `on_start()` or `on_event(e)`. Available primitives are `notes.call`, `notes.subscribe`, `notes.encode`, `notes.decode`, and bounded logging. No native GPIO, filesystem bypass, arbitrary shared-library loading or user-installed metatables/finalizers are exposed. Native library call duration is not an instruction-counter guarantee.
 
 ```lua
-notes.subscribe('/dev/buttons')
-function on_event(e)
-  if e.data.button == 'C' and e.event == 'press' then
-    notes.call('/sys/ui', 'refresh')
-    return true
-  end
+function on_start()
+  notes.on('/dev/buttons','press',function(e)
+    if e.data.button=='C' then notes.call('/sys/ui','refresh');return true end
+  end)
 end
 ```
 
@@ -49,10 +47,10 @@ Lua memory and instruction budgets protect other work; exhaustion faults that ap
 
 Input during display busy is an independent policy (`dispatch`, `queue`, `drop` for configured sources). A script can request another presentation, but can never bypass the screen driver's readiness gate. No setting interrupts an active E6 refresh. Rules, queues and recording behavior remain configurable rather than tied to a particular sample UI.
 
-The E6 factory suite has twenty JSON layouts (ten pages, portrait/landscape),
+The E6 factory suite shares responsive JSON layouts between portrait and landscape,
 ordinary Lua entry/modules and small indexed icons. It provides welcome/AP/offline
 choices, menu, Wi-Fi/IP/MAC, service configuration summary, SD listing/mount,
-power/memory state, recording state, sleep and a color sample page. Service
+power/memory state, recording state, sleep and a Chinese/English selection. Service
 configuration is available through the package's management webpage. Voice requires
 an explicitly configured upstream route; a saved URL is not proof of a working
 Harness connection. Background state changes update the suite's view without

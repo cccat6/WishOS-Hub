@@ -75,9 +75,9 @@ and current applied policy, not compile-time hardware prohibitions.
 `/system` remains read-only for system metadata, standard Lua helpers and the
 ordinary recovery application. Helpers retain `/system/lib/input.lua` and
 `/system/lib/ai.lua` runtime URIs; their source is now `firmware/WishOS/lib/` in
-the OS repository. Hub guidance ships references, not another copy of the runtime
-libraries. The new native source pin and joint acceptance are pending the terminal
-owner's final commit; published old-release evidence remains unchanged.
+the OS repository. Hub guidance bundles the pinned helper source as an authoring reference; devices
+continue to use their own standard modules. Final native source is b71ab43; its
+physical acceptance is recorded separately from Hub service tests.
 
 
 ## Storage catalog pagination

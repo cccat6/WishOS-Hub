@@ -101,15 +101,17 @@ and actual connection separately. Configuration replaces the previous settings;
 
 The separate Hub accepts active devices at `/os/device?id=<device_id>`. A Hub with a direct device address can use `protocol:"wishos"` and `deviceUrl`. Both attach the same
 remote dispatcher and durable host journal. The Hub MCP at `/mcp` discovers
-resource methods; legacy Notes v2 uses an explicit `/mcp/notes` adapter. No E6
+resource methods. No E6
 geometry or waveform exists in the WishOS MCP contract.
 
 The managed `wishos.ai` server route waits for the bound Harness, stages large resources and returns a typed result. Its internal voice collector invokes the selected ASR/Harness adapters; upload, Harness completion and device effect completion remain distinct. The
-standalone `npm run os-bridge` is for custom non-AI service routes, not a replacement for the managed Hub AI connector. Configure a WishOS device in Hub (WS link or deviceUrl) for `/services/ai`. The standalone bridge accepts `NOTES_SERVICE_MODULE` for custom routes,
-`NOTES_OS_URL`, `NOTES_HUB_URL`, `NOTES_DEVICE_ID`, optional `NOTES_HUB_TOKEN`, and a
-`NOTES_OS_JOURNAL` SQLite path. Only a handler with an upstream idempotency guarantee
-may declare `replaySafe`. A process crash during another side effect yields an
-unknown-outcome receipt rather than silently repeating it.
+separate Hub owns ASR/Harness admission and its durable journal. Applications use the
+system AI route rather than implementing model-provider protocols. A non-AI remote
+service can implement the declared request/result protocol without invoking a model.
+Use the current Hub entry points and guidance; removed Notes Monitor adapters and
+old standalone bridge commands are not part of the WishOS contract. Unknown
+side-effect outcomes must not be silently replayed.
+
 
 Zigbee start/send carry operation IDs. A failure before starting its worker releases
 admission. After the vendor SDK acquires an unreleasable cluster graph, a failed

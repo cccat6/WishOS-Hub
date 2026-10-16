@@ -29,14 +29,46 @@ const names = [
   'driver-guide',
   'packages',
 ];
+const sources = [
+  ...names.map((id) => ({
+    id,
+    path: `skills/agentic-notes-hardware/references/${id}.md`,
+    file: id + '.md',
+    mimeType: 'text/markdown',
+  })),
+  {
+    id: 'system-runtime',
+    path: 'docs/agent-os-runtime.md',
+    file: 'system-runtime.md',
+    mimeType: 'text/markdown',
+  },
+  {
+    id: 'hardware-packages',
+    path: 'hardware/agent-os/README.md',
+    file: 'hardware-packages.md',
+    mimeType: 'text/markdown',
+  },
+  {
+    id: 'package-contract',
+    path: 'docs/package-contract.md',
+    file: 'package-contract.md',
+    mimeType: 'text/markdown',
+  },
+  {
+    id: 'input-library',
+    path: 'firmware/WishOS/lib/input.lua',
+    file: 'input.lua',
+    mimeType: 'text/x-lua',
+  },
+  { id: 'ai-library', path: 'firmware/WishOS/lib/ai.lua', file: 'ai.lua', mimeType: 'text/x-lua' },
+];
 await mkdir('vendor/os-reference', { recursive: true });
 const records = [];
-for (const id of names) {
-  const path = `skills/agentic-notes-hardware/references/${id}.md`,
-    text = read('show', `${commit}:${path}`),
+for (const { id, path, file, mimeType } of sources) {
+  const text = read('show', `${commit}:${path}`),
     sha256 = createHash('sha256').update(text).digest('hex');
-  await writeFile(`vendor/os-reference/${id}.md`, text);
-  records.push({ id, path, sha256 });
+  await writeFile(`vendor/os-reference/${file}`, text);
+  records.push({ id, path, file, mimeType, sha256 });
 }
 await writeFile(
   'vendor/os-reference/snapshot.json',

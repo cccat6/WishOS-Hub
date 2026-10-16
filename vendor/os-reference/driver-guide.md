@@ -24,11 +24,7 @@
 
 ## 配置与移植
 
-公开配置传递结构见工作区的 `docs/contracts/os-policy.schema.json`。它只检查外壳；每个实际字段由资源的运行时schema与硬约束验证，不能仅凭JSON校验成功就说设备支持。
+配置外壳与参数以 `/sys/capabilities describe`、`/sys/config describe` 返回的当前契约为准；每个实际字段由资源校验，不能仅凭 JSON 语法正确就说设备支持。
 目标服务可以替换BSP、存储或网络实现，但保留上层操作与状态语义。某平台没有的功能返回unsupported及原因，不能给一个无效果的成功回执。
-
-## 当前实施状态
-
-2026-10-12 代码已经包含通用策略、VFS、SdFat FAT32/exFAT、资源统计、异步显示状态机、运行时 LVGL JSON UI 和 Lua 行为脚本。主机验证与目标编译通过的范围见仓库 `docs/agent-os-runtime.md`；没有烧录新板。NFSv3/TCP 现已通过 `/services/nfs` 按需接入，见 [NFS 服务](nfs-service.md)。
 
 公共调用示例与动态 UI 资源预算见 [运行时 UI 指南](dynamic-ui.md)。完整系统设计中未实现的能力仍是目标，不得当作执行接口。公开发行使用显式文件清单，不直接打包工作区。

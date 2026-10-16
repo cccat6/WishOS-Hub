@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { ArtifactStore } from '../src/os-artifacts.js';
 import { nodeLuaCompiler } from '../src/node-lua-compiler.js';
@@ -365,6 +366,25 @@ test('MCP clients discover layer guidance, authoritative references, authoring p
       ['overview', 'system', 'drivers', 'applications', 'packages'],
     );
     assert(catalog.references.some((r: any) => r.id === 'packages'));
+    for (const id of ['input-library', 'ai-library']) {
+      const reference = catalog.references.find((r: any) => r.id === id);
+      assert(reference);
+      const source = await client.readResource({ uri: reference.uri });
+      assert.equal(source.contents[0].mimeType, 'text/x-lua');
+      assert.equal(
+        createHash('sha256')
+          .update((source.contents[0] as any).text)
+          .digest('hex'),
+        reference.sha256,
+      );
+      const fallback: any = await client.callTool({
+        name: 'get_guidance',
+        arguments: { component_id: id },
+      });
+      assert.equal(fallback.content[0].resource.mimeType, 'text/x-lua');
+      assert.equal(fallback.content[0].resource.text, (source.contents[0] as any).text);
+    }
+
     const guide: any = await client.callTool({
       name: 'get_guidance',
       arguments: { component_id: 'wishos-packages' },

@@ -11,6 +11,8 @@ UI 描述交给系统渲染，应用提供内容和行为；出厂套装也是�
 按设备声明复用标准 helper：`/system/lib/input.lua`、`/system/lib/ai.lua`。
 它们在 OS 源库中的路径是 `firmware/WishOS/lib/{input,ai}.lua`；仓库源码路径不是设备 URI，
 不要把标准库当作某硬件初始 UI 的文件再次打包。
+需要 API 细节时可读 get_guidance 的 input-library / ai-library；返回的是固定版本源码参考，
+实际运行仍使用设备声明的标准模块。
 能力调用在生命周期/事件回调中执行；预检编译不执行 on_start，不能证明任意程序语义。
 在 descriptor 声明需求和预算，并处理原生准入/操作失败。
 

@@ -1,77 +1,140 @@
 {
   "format": "wishos-source-snapshot/1",
   "repository": "https://github.com/cccat6/WishOS",
-  "commit": "b6cf86238838564c771e23a1f6b4ca276b6d525c",
+  "commit": "c60da3b131b906afd1095ffbcf7fe70d726c989b",
   "files": [
     {
       "id": "resource-model",
       "path": "skills/agentic-notes-hardware/references/resource-model.md",
+      "file": "resource-model.md",
+      "mimeType": "text/markdown",
       "sha256": "7c2f88ecb2c2ca6c24256f89f5d944b581ab6a555dad7ca07abe515c4703437b"
     },
     {
       "id": "runtime-apps",
       "path": "skills/agentic-notes-hardware/references/runtime-apps.md",
+      "file": "runtime-apps.md",
+      "mimeType": "text/markdown",
       "sha256": "12ece5d6040d7b25ec8049a98df843416881ea4636e4cf45593bead0ca5ac461"
     },
     {
       "id": "callbacks",
       "path": "skills/agentic-notes-hardware/references/callbacks.md",
+      "file": "callbacks.md",
+      "mimeType": "text/markdown",
       "sha256": "5177046f63bfb565e21c403e89423f1dd3beccc67c435b68477fe10ebdde3dcc"
     },
     {
       "id": "applications",
       "path": "skills/agentic-notes-hardware/references/applications.md",
-      "sha256": "b24e85defb1239d45d8113453cebe420a0ae07672da0bac4c4fd177f47d58e04"
+      "file": "applications.md",
+      "mimeType": "text/markdown",
+      "sha256": "017e15a4d66b4c166568083998dfc2a8a049a08dc134172e155e1645d9769f70"
     },
     {
       "id": "dynamic-ui",
       "path": "skills/agentic-notes-hardware/references/dynamic-ui.md",
-      "sha256": "0e53a64728209f4eecf41d2f74cb8265b0815c65f041932fff6027c1da0f8d03"
+      "file": "dynamic-ui.md",
+      "mimeType": "text/markdown",
+      "sha256": "6569d4d0db9a12bf18fe1f92b967fbaa0b95de0fa99a9fb059413e90e850bebb"
     },
     {
       "id": "display-interface",
       "path": "skills/agentic-notes-hardware/references/display-interface.md",
+      "file": "display-interface.md",
+      "mimeType": "text/markdown",
       "sha256": "8bcd542b470096ad242e53567f4c1c7a3a92fd013924a69b6c366158d476b74d"
     },
     {
       "id": "managed-services",
       "path": "skills/agentic-notes-hardware/references/managed-services.md",
+      "file": "managed-services.md",
+      "mimeType": "text/markdown",
       "sha256": "e4b5177d70ef2b96848d7366f7fe45828195abf186b6e849dfa4dbed04043614"
     },
     {
       "id": "audio",
       "path": "skills/agentic-notes-hardware/references/audio.md",
+      "file": "audio.md",
+      "mimeType": "text/markdown",
       "sha256": "1039604885da64d07e3db03ce496f9e7a749af8e5dd4866229cf4556e2c0d18f"
     },
     {
       "id": "interactions",
       "path": "skills/agentic-notes-hardware/references/interactions.md",
+      "file": "interactions.md",
+      "mimeType": "text/markdown",
       "sha256": "b888fd10ddaf7be8f9c182b01d6495d1fd5a394198200e9119562fec4d33c5f3"
     },
     {
       "id": "connectivity",
       "path": "skills/agentic-notes-hardware/references/connectivity.md",
-      "sha256": "af4708784df72d903c4d4cf40ee9587a4c59c45ce67908ab4353021da8d5e4eb"
+      "file": "connectivity.md",
+      "mimeType": "text/markdown",
+      "sha256": "cf114a86715425e0eb59845d7bffdc098849da5699d51a0848c18fc9b2f25c00"
     },
     {
       "id": "wireless-config",
       "path": "skills/agentic-notes-hardware/references/wireless-config.md",
+      "file": "wireless-config.md",
+      "mimeType": "text/markdown",
       "sha256": "98f0aa44235b384b11671c2e04889195b2f410fde8d2084bf7e794f84605fc04"
     },
     {
       "id": "nfs-service",
       "path": "skills/agentic-notes-hardware/references/nfs-service.md",
-      "sha256": "d9b7e59c2cb7599032701a44d898374e5445f05884a6c1c1058c93e60bfb643b"
+      "file": "nfs-service.md",
+      "mimeType": "text/markdown",
+      "sha256": "bc1f268ee56313e008c1fa9d58d8d61663cfb48688e41162f124f40d95a4d3aa"
     },
     {
       "id": "driver-guide",
       "path": "skills/agentic-notes-hardware/references/driver-guide.md",
-      "sha256": "ff82868990d285ae4fed91063020095db76e437bd82e7464384f2214570d5c9f"
+      "file": "driver-guide.md",
+      "mimeType": "text/markdown",
+      "sha256": "ed3ab49f1cb8875f7e4eeb54b5acc84b760279bec560d33ad719a4c7d89a6d53"
     },
     {
       "id": "packages",
       "path": "skills/agentic-notes-hardware/references/packages.md",
+      "file": "packages.md",
+      "mimeType": "text/markdown",
       "sha256": "e77c7c58ce21a9285d6721bc672f2ca3a9afc3b5ba412cdd41eecaa161554b55"
+    },
+    {
+      "id": "system-runtime",
+      "path": "docs/agent-os-runtime.md",
+      "file": "system-runtime.md",
+      "mimeType": "text/markdown",
+      "sha256": "a50fb0863600fdd8b5c8967d4471da92b0bc43dfacb868a8954b9885cae1663c"
+    },
+    {
+      "id": "hardware-packages",
+      "path": "hardware/agent-os/README.md",
+      "file": "hardware-packages.md",
+      "mimeType": "text/markdown",
+      "sha256": "832a8859d8c9825138c76c682849ccfb1760ce35243cf4f412b61d1a53e0a81c"
+    },
+    {
+      "id": "package-contract",
+      "path": "docs/package-contract.md",
+      "file": "package-contract.md",
+      "mimeType": "text/markdown",
+      "sha256": "e966353a8f52e42182488c160a34caa267ba874c680ade653938348c37e77f90"
+    },
+    {
+      "id": "input-library",
+      "path": "firmware/WishOS/lib/input.lua",
+      "file": "input.lua",
+      "mimeType": "text/x-lua",
+      "sha256": "4962f6a643023e34a6f264dd6aab163f8b80b59013740106bfd24f75fcd9d7a0"
+    },
+    {
+      "id": "ai-library",
+      "path": "firmware/WishOS/lib/ai.lua",
+      "file": "ai.lua",
+      "mimeType": "text/x-lua",
+      "sha256": "ec1efeaec70740b4ca0b81baaf87e80860a3710365600a28fb2f74ed43daec3f"
     }
   ]
 }

@@ -39,10 +39,12 @@ export function registerGuidance(server: McpServer) {
       reference.uri,
       {
         title: 'WishOS ' + reference.id,
-        mimeType: 'text/markdown',
+        mimeType: reference.mimeType,
         description: '固定版本 OS 参考；实际支持以当前设备元数据为准',
       },
-      (uri) => ({ contents: [{ uri: uri.href, mimeType: 'text/markdown', text: reference.text }] }),
+      (uri) => ({
+        contents: [{ uri: uri.href, mimeType: reference.mimeType, text: reference.text }],
+      }),
     );
   for (const guide of guidance)
     server.registerResource(
@@ -82,7 +84,7 @@ export function registerGuidance(server: McpServer) {
         content: [
           {
             type: 'resource',
-            resource: { uri: guide.uri, mimeType: 'text/markdown', text: guide.text },
+            resource: { uri: guide.uri, mimeType: guide.mimeType, text: guide.text },
           },
         ],
       };

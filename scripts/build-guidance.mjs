@@ -33,11 +33,12 @@ await writeFile(
 const snapshot = JSON.parse(await readFile('vendor/os-reference/snapshot.json', 'utf8'));
 const references = await Promise.all(
   snapshot.files.map(async (record) => {
-    const text = await readFile(`vendor/os-reference/${record.id}.md`, 'utf8');
+    const text = await readFile(`vendor/os-reference/${record.file ?? record.id + '.md'}`, 'utf8');
     if (createHash('sha256').update(text).digest('hex') !== record.sha256)
       throw Error('OS reference snapshot changed: ' + record.id);
     return {
       ...record,
+      mimeType: record.mimeType ?? 'text/markdown',
       uri: `wishos://references/${record.id}`,
       source: { repository: snapshot.repository, commit: snapshot.commit, path: record.path },
       text,

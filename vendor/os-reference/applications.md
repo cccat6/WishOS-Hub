@@ -86,3 +86,9 @@ phone image app creates its view and publishes `/app/photo/context`; its browser
 client writes to that view. Leaving the app then releases its route, view and
 unstarted work through ordinary ownership cleanup. The browser converter is
 bundled offline; it is not a privileged system rendering path.
+
+Installation volumes are system policy. `/sys/apps read` and `describe` return
+`install_providers` as an array. The device package provides defaults; a system
+action may call `configure {install_providers:[...],persist:true}`. The whole change
+is validated, including existing catalog references, and rejection preserves the
+previous policy. Writable volume presence does not itself grant installation.
