@@ -13,6 +13,8 @@ export class CodexAdapter implements HarnessAdapter {
   readonly nativeSpeech?: CodexDictation;
   capabilities = { interrupt: true, approval: true, usage: true, steer: true };
   private initialized?: Promise<void>;
+  private loaded = new Set<string>();
+  private closed = false;
   private tainted = false;
   private active = new Map<string, string>();
   private admission = new Map<string, Promise<void>>();
@@ -26,10 +28,15 @@ export class CodexAdapter implements HarnessAdapter {
     private threadOptions: Record<string, unknown> = {},
     speechOptions?: CodexSpeechOptions,
   ) {
+    rpc.on('closed', () => {
+      this.loaded.clear();
+      this.initialized = undefined;
+    });
     if (speechOptions)
       this.nativeSpeech = new CodexDictation(() => this.speechAuth(), speechOptions);
   }
   private async initialize() {
+    if (this.closed) throw Error('Codex adapter closed');
     this.initialized ??= this.rpc
       .request('initialize', { clientInfo: { name: 'wishos-hub', version: '0.5.0' } })
       .then(() => {
@@ -90,7 +97,7 @@ export class CodexAdapter implements HarnessAdapter {
     );
   }
   async readTools(session: string) {
-    if (!this.active.has(session)) await this.open(session);
+    await this.open(session);
     const catalog = await this.rpc.request(
       'mcpServerStatus/list',
       { threadId: session, detail: 'toolsAndAuthOnly' },
@@ -122,14 +129,19 @@ export class CodexAdapter implements HarnessAdapter {
   async open(id?: string) {
     if (this.tainted) throw new Error('Codex runtime requires restart after an uncertain run');
     await this.initialize();
+    if (id && this.loaded.has(id)) return id;
     const r = await this.rpc.request(
       id ? 'thread/resume' : 'thread/start',
       id ? { ...this.threadOptions, threadId: id } : this.threadOptions,
     );
     if (typeof r.thread?.id !== 'string') throw new Error('missing Codex thread id');
+    this.loaded.add(r.thread.id);
     return r.thread.id;
   }
   send(session: string, text: string, emit: (e: AgentEvent) => void): Promise<string> {
+    if (this.closed) return Promise.reject(Error('Codex adapter closed'));
+    if (this.tainted)
+      return Promise.reject(Error('Codex runtime requires restart after an uncertain run'));
     if (this.active.has(session) || this.admission.has(session))
       return Promise.reject(new Error('Codex session already running; use steer'));
     let admitted!: () => void;
@@ -282,6 +294,16 @@ export class CodexAdapter implements HarnessAdapter {
     if (a.method === 'item/permissions/requestApproval') {
       result = { permissions: accept ? (a.params.permissions ?? {}) : {}, scope: 'turn' };
     } else if (a.method === 'mcpServer/elicitation/request') {
+      const schema = a.params.requestedSchema;
+      if (
+        accept &&
+        content === undefined &&
+        schema?.type === 'object' &&
+        schema.properties &&
+        !Object.keys(schema.properties).length &&
+        !schema.required?.length
+      )
+        content = {};
       if (
         accept &&
         a.params.mode !== 'url' &&
@@ -302,6 +324,8 @@ export class CodexAdapter implements HarnessAdapter {
     this.rpc.write({ id: a.wireId, result });
   }
   async close() {
+    this.closed = true;
+    this.loaded.clear();
     for (const a of this.approvals.values()) clearTimeout(a.timer);
     this.approvals.clear();
     await this.rpc.close();

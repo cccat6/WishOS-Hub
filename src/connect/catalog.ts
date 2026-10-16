@@ -67,6 +67,7 @@ export function runtimeDescription(r: RuntimeConfig) {
     id: r.id,
     kind: r.kind,
     label: r.label,
+    ...(r.approvalsReviewer ? { approvals_reviewer: r.approvalsReviewer } : {}),
     ingress: spec.ingress,
     session_owner: 'selected_runtime',
     credential_owner: 'user_host',

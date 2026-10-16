@@ -605,7 +605,10 @@ export class ConnectorServer {
           this.hubBase,
           this.internalToken,
           this.stop.signal,
-        )('/api/approvals/' + input.id, { accept: input.accept });
+        )('/api/approvals/' + input.id, {
+          accept: input.accept,
+          ...(input.content !== undefined ? { content: input.content } : {}),
+        });
         reply(res, 200, JSON.parse(r.content[0]!.text));
         return;
       }

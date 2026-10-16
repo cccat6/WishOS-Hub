@@ -20,24 +20,35 @@ export class UnboundRuntime implements HarnessAdapter {
   }
   async close() {}
 }
-export function detectedCodexSpeech() {
+const desktopPackages = [
+  {
+    info: '/Applications/Codex.app/Contents/Info.plist',
+    command: '/Applications/Codex.app/Contents/Resources/bin/codex',
+  },
+  {
+    info: '/Applications/ChatGPT.app/Contents/Info.plist',
+    command:
+      '/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex',
+  },
+];
+export function detectedCodexSpeech(infoFiles?: string[]) {
   const version = process.env.CODEX_APP_VERSION;
   if (version && /^[0-9.]+$/.test(version)) return { appVersion: version };
-  if (process.platform === 'darwin') {
-    const file = '/Applications/Codex.app/Contents/Info.plist';
-    if (existsSync(file)) {
-      const text = readFileSync(file, 'utf8'),
-        found = text.match(/<key>CFBundleShortVersionString<\/key>\s*<string>([0-9.]+)<\/string>/);
-      if (found) return { appVersion: found[1]! };
+  for (const file of infoFiles ??
+    (process.platform === 'darwin' ? desktopPackages.map((p) => p.info) : [])) {
+    if (!existsSync(file)) continue;
+    const text = readFileSync(file, 'utf8'),
+      found = text.match(/<key>CFBundleShortVersionString<\/key>\s*<string>([0-9.]+)<\/string>/);
+    if (found) return { appVersion: found[1]! };
+    if (process.platform === 'darwin')
       try {
-        const version = execFileSync(
+        const value = execFileSync(
           '/usr/bin/plutil',
           ['-extract', 'CFBundleShortVersionString', 'raw', '-o', '-', file],
           { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] },
         ).trim();
-        if (/^[0-9.]+$/.test(version)) return { appVersion: version };
+        if (/^[0-9.]+$/.test(value)) return { appVersion: value };
       } catch {}
-    }
   }
   return undefined;
 }
@@ -58,16 +69,17 @@ export function createRuntime(
     return new CodexAdapter(
       new RpcProcess(
         config.command ??
-          (process.platform === 'darwin' &&
-          existsSync('/Applications/Codex.app/Contents/Resources/bin/codex')
-            ? '/Applications/Codex.app/Contents/Resources/bin/codex'
-            : 'codex'),
+          (process.platform === 'darwin'
+            ? desktopPackages.find((p) => existsSync(p.command))?.command
+            : undefined) ??
+          'codex',
         config.args ?? ['app-server'],
         cwd,
       ),
       config.timeoutMs,
       {
         cwd,
+        ...(config.approvalsReviewer ? { approvalsReviewer: config.approvalsReviewer } : {}),
         config: {
           mcp_servers: {
             wishos: { url: bridge.url, http_headers: { Authorization: 'Bearer ' + bridge.token } },

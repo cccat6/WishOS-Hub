@@ -91,6 +91,11 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
           method: 'item/permissions/requestApproval',
           permissions: { network: { enabled: true } },
         },
+        'empty-elicitation': {
+          method: 'mcpServer/elicitation/request',
+          mode: 'form',
+          requestedSchema: { type: 'object', properties: {} },
+        },
         elicitation: {
           method: 'mcpServer/elicitation/request',
           mode: 'form',

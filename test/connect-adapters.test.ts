@@ -147,3 +147,40 @@ test('ACP SSE parses CRLF and UTF-8 split at every network byte boundary', async
     await rpc.close();
   }
 });
+
+test('native speech discovery accepts the installed desktop package location and keeps explicit version override', async () => {
+  const { detectedCodexSpeech } = await import('../src/connect/runtime.js');
+  const { mkdtemp, writeFile, rm } = await import('node:fs/promises'),
+    { tmpdir } = await import('node:os'),
+    { join } = await import('node:path');
+  const root = await mkdtemp(join(tmpdir(), 'wishos-desktop-info-')),
+    prior = process.env.CODEX_APP_VERSION;
+  try {
+    delete process.env.CODEX_APP_VERSION;
+    const info = join(root, 'Info.plist');
+    await writeFile(
+      info,
+      '<plist><dict><key>CFBundleShortVersionString</key><string>26.1007.30912</string></dict></plist>',
+    );
+    assert.deepEqual(detectedCodexSpeech([join(root, 'missing.plist'), info]), {
+      appVersion: '26.1007.30912',
+    });
+    process.env.CODEX_APP_VERSION = '26.1016.1';
+    assert.deepEqual(detectedCodexSpeech([info]), { appVersion: '26.1016.1' });
+  } finally {
+    if (prior === undefined) delete process.env.CODEX_APP_VERSION;
+    else process.env.CODEX_APP_VERSION = prior;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Codex approval reviewer is explicit configuration and rejected for an adapter without that implementation', async () => {
+  const { RuntimeConfig } = await import('../src/connect/config.js');
+  const runtime = { id: 'c', kind: 'codex', label: 'Codex', approvalsReviewer: 'auto_review' };
+  assert.equal(RuntimeConfig.parse(runtime).approvalsReviewer, 'auto_review');
+  assert.throws(() => RuntimeConfig.parse({ ...runtime, kind: 'cursor' }));
+  assert.equal(
+    RuntimeConfig.parse({ id: 'c', kind: 'codex', label: 'Codex' }).approvalsReviewer,
+    undefined,
+  );
+});

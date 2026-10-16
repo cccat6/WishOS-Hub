@@ -31,6 +31,7 @@ export const RuntimeConfig = z
       .optional(),
     endpoint: z.string().url().max(2048).optional(),
     authTokenEnv: SecretReference.optional(),
+    approvalsReviewer: z.enum(['user', 'auto_review']).optional(),
     profile: z.string().max(128).optional(),
     home: z.string().max(4096).refine(isAbsolute, 'Absolute Harness home required').optional(),
     nativeSpeech: z
@@ -45,6 +46,12 @@ export const RuntimeConfig = z
   })
   .strict()
   .superRefine((r, ctx) => {
+    if (r.approvalsReviewer && r.kind !== 'codex')
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Approval reviewer settings belong to Codex',
+        path: ['approvalsReviewer'],
+      });
     if (r.nativeSpeech && r.kind !== 'codex')
       ctx.addIssue({
         code: 'custom',
