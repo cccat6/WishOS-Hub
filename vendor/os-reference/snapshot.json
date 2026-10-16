@@ -1,7 +1,7 @@
 {
   "format": "wishos-source-snapshot/1",
   "repository": "https://github.com/cccat6/WishOS",
-  "commit": "c60da3b131b906afd1095ffbcf7fe70d726c989b",
+  "commit": "41d7099ef4905df3967ca5ef0474a6b11f1a72ab",
   "files": [
     {
       "id": "resource-model",
@@ -113,7 +113,7 @@
       "path": "hardware/agent-os/README.md",
       "file": "hardware-packages.md",
       "mimeType": "text/markdown",
-      "sha256": "832a8859d8c9825138c76c682849ccfb1760ce35243cf4f412b61d1a53e0a81c"
+      "sha256": "feb6210ff5f49975227438bafbab18be7fe34fe0b67ab20b3e33a9bdedaffb7c"
     },
     {
       "id": "package-contract",

@@ -43,8 +43,7 @@ Lua modules and a small ordinary recovery application. Do not flash the initial
 filesystem image over an existing installation during an ordinary firmware update. `/defaults.json` is a
 normal `Policies` restore snapshot, not an unchecked bypass; saved settings override
 package defaults. `/applications.json` selects ordinary launcher and voice application descriptors and their initial catalog. The application manager owns boot/activation selection. A descriptor's `memory_bytes` is an optional VM ceiling, not a preallocated partition.
-The E6 suite requests 81920 bytes; other applications retain the system default.
-Its measured 64-bit host startup peak is about 63 KiB; device use differs.
+The localized E6 suite declares a configurable 98304-byte VM ceiling; this is not a reservation. The host test reads the application descriptor instead of duplicating the value. Both 32-bit targets and 64-bit hosts use the same allocation policy; actual use differs.
 The E6 package's entrypoint loads its UI manifest and opens its entry through public
 resource calls. There is no independent native factory-UI boot step. `/sys/apps configure` selects installed launcher/voice references. The low-level runtime resource can load/restart/stop a transient script, but does not create another boot-selection authority. Package files may reside on any suitable VFS provider. Factory packages publish their source repository/path and user help; replacing the launcher uses the same loading and resource interfaces as any other application.
 

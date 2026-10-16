@@ -76,7 +76,7 @@ and current applied policy, not compile-time hardware prohibitions.
 ordinary recovery application. Helpers retain `/system/lib/input.lua` and
 `/system/lib/ai.lua` runtime URIs; their source is now `firmware/WishOS/lib/` in
 the OS repository. Hub guidance bundles the pinned helper source as an authoring reference; devices
-continue to use their own standard modules. Final native source is b71ab43; its
+continue to use their own standard modules. Final native source is 5c71d503; its
 physical acceptance is recorded separately from Hub service tests.
 
 
