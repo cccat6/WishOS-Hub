@@ -59,7 +59,18 @@ export function voiceRoute(
     onProgress?: (progress: AudioDeliveryProgress) => void;
   } = {},
 ): RemoteHandler {
-  const state = new Map<string, { id: string; rate: number }>();
+  const state = new Map<
+    string,
+    {
+      id: string;
+      rate: number;
+      first?: any;
+      started: number;
+      startedAt: number;
+      readMs: number;
+      readAt: number;
+    }
+  >();
   const device = async (method: string, args: Record<string, unknown>) => {
     let r;
     try {
@@ -84,8 +95,20 @@ export function voiceRoute(
       if (!(error instanceof Error) || error.message !== 'audio_not_found') throw error;
     }
     let capture;
+    const started = performance.now(),
+      startedAt = Date.now();
+    let readMs = 0,
+      readAt = 0;
     try {
-      capture = await device('read', { recording_id: id });
+      capture = await device('read_chunk', { recording_id: id, limit: options.batchBlocks ?? 16 });
+      readMs = Math.round(performance.now() - started);
+      readAt = Date.now();
+      // Older read_chunk replies may omit metadata while still returning data.
+      // Keep that first batch; only those adapters need the separate status read.
+      if (capture.sample_rate === undefined) {
+        const metadata = await device('read', { recording_id: id });
+        capture = { ...metadata, ...capture, sample_rate: metadata.sample_rate };
+      }
     } catch (error) {
       if (typeof r.payload.file !== 'string') throw error;
       const saved = await rpc('/services/recordings', 'read', { file: r.payload.file });
@@ -102,12 +125,21 @@ export function voiceRoute(
       },
       signal,
     );
-    state.set(r.request_id, { id, rate: capture.sample_rate });
+    state.set(r.request_id, {
+      id,
+      rate: capture.sample_rate,
+      first: Array.isArray(capture.chunks) ? capture : undefined,
+      started,
+      startedAt,
+      readMs,
+      readAt,
+    });
   };
   const handler: RemoteHandler = async (r, signal) => {
     const id = identity(r);
     if (!state.has(r.request_id)) await admit(r, signal);
-    const started = performance.now();
+    const admission = state.get(r.request_id);
+    const started = admission?.started ?? performance.now();
     let lastAck = started;
     const progress: AudioDeliveryProgress = {
       recording_id: id,
@@ -121,7 +153,7 @@ export function voiceRoute(
       max_ack_gap_ms: 0,
       device_dropped_samples: '0',
       request_observed_at_ms: r.observed_at_ms,
-      collector_started_at_ms: Date.now(),
+      collector_started_at_ms: admission?.startedAt ?? Date.now(),
       ack_mode: 'read_ack',
       piggyback_acks: 0,
       standalone_acks: 0,
@@ -151,45 +183,67 @@ export function voiceRoute(
       let status = await api(id, '', undefined, signal);
       if (status.state === 'receiving') {
         let capture: any;
+        let first = admission?.first;
+        if (admission) admission.first = undefined;
         let pendingAck: number | undefined,
           piggyback = true;
         for (;;) {
           signal.throwIfAborted();
           try {
             const began = performance.now();
-            const args: Record<string, unknown> = {
-              recording_id: id,
-              limit: options.batchBlocks ?? 16,
-              ...(piggyback && pendingAck !== undefined ? { after_sequence: pendingAck } : {}),
-            };
-            try {
-              capture = await device('read_chunk', args);
-            } catch (error) {
-              // Older adapters explicitly reject the optional read/ack field before
-              // effects. Never retry an unknown transport outcome as a legacy read.
-              if (
-                !('after_sequence' in args) ||
-                !(error instanceof Error) ||
-                !['unknown_mic_argument', 'unknown_argument'].includes(error.message)
-              )
-                throw error;
-              piggyback = false;
-              progress.ack_mode = 'legacy';
-              await device('ack', { recording_id: id, next_sequence: pendingAck });
-              progress.standalone_acks++;
-              acknowledged(pendingAck!);
-              capture = await device('read_chunk', {
+            if (first) {
+              capture = first;
+              first = undefined;
+              progress.read_ms = admission!.readMs;
+              if (capture.chunks.length) progress.first_batch_at_ms = admission!.readAt;
+            } else {
+              const args: Record<string, unknown> = {
                 recording_id: id,
                 limit: options.batchBlocks ?? 16,
-              });
+                ...(piggyback && pendingAck !== undefined ? { after_sequence: pendingAck } : {}),
+              };
+              let rejected = false;
+              try {
+                capture = await device('read_chunk', args);
+              } catch (error) {
+                // Older adapters explicitly reject the optional read/ack field before
+                // effects. Never retry an unknown transport outcome as a legacy read.
+                if (
+                  !('after_sequence' in args) ||
+                  !(error instanceof Error) ||
+                  !['unknown_mic_argument', 'unknown_argument'].includes(error.message)
+                )
+                  throw error;
+                rejected = true;
+              }
+              // An undeclared old adapter may ignore the field instead of rejecting
+              // it. Returned pre-cursor data (or an explicit lower ACK watermark)
+              // proves the combined confirmation was not applied.
+              const ignored =
+                !rejected &&
+                pendingAck !== undefined &&
+                (capture.chunks.some((chunk: any) => chunk.sequence < pendingAck!) ||
+                  (typeof capture.acknowledged_sequence === 'number' &&
+                    capture.acknowledged_sequence < pendingAck));
+              if (rejected || ignored) {
+                piggyback = false;
+                progress.ack_mode = 'legacy';
+                await device('ack', { recording_id: id, next_sequence: pendingAck });
+                progress.standalone_acks++;
+                acknowledged(pendingAck!);
+                capture = await device('read_chunk', {
+                  recording_id: id,
+                  limit: options.batchBlocks ?? 16,
+                });
+              }
+              if (piggyback && pendingAck !== undefined) {
+                acknowledged(pendingAck);
+                progress.piggyback_acks++;
+              }
+              pendingAck = undefined;
+              progress.read_ms = Math.round(performance.now() - began);
             }
-            if (piggyback && pendingAck !== undefined) {
-              acknowledged(pendingAck);
-              progress.piggyback_acks++;
-            }
-            pendingAck = undefined;
             progress.reads++;
-            progress.read_ms = Math.round(performance.now() - began);
             progress.max_read_ms = Math.max(progress.max_read_ms, progress.read_ms);
             progress.device_dropped_samples = capture.dropped_samples ?? '0';
             if (capture.chunks.length) progress.first_batch_at_ms ??= Date.now();
@@ -211,8 +265,10 @@ export function voiceRoute(
           if (capture.chunks.length) {
             status = await api(id, 'chunks', { chunks: capture.chunks }, signal);
             if (status.durable !== true) throw Error('audio_durable_receipt_required');
-            progress.blocks += capture.chunks.length;
-            pendingAck = capture.offered_sequence;
+            progress.blocks = status.blocks ?? progress.blocks + capture.chunks.length;
+            // offered_sequence is a device-wide peek high-water mark, not proof
+            // that this host durably received every previously offered packet.
+            pendingAck = Math.max(...capture.chunks.map((chunk: any) => chunk.sequence + 1));
             if (!piggyback) {
               await device('ack', { recording_id: id, next_sequence: pendingAck });
               progress.standalone_acks++;

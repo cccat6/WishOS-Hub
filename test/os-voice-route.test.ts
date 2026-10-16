@@ -6,7 +6,16 @@ import { OsAudioIngress } from '../src/os-audio-ingress.js';
 import type { DeviceRpc } from '../src/os-remote.js';
 
 function fixture(
-  options: { legacy?: boolean; latency?: number; failReadAck?: boolean; durable?: boolean } = {},
+  options: {
+    legacy?: boolean;
+    latency?: number;
+    failReadAck?: boolean;
+    durable?: boolean;
+    ignoredAck?: boolean;
+    offeredAhead?: boolean;
+    omitRate?: boolean;
+    totalBlocks?: number;
+  } = {},
 ) {
   const db = new DatabaseSync(':memory:');
   const ingress = new OsAudioIngress(db, async () => ({ run_id: 'native-run' }));
@@ -18,11 +27,13 @@ function fixture(
     highest = 0,
     rejects = 0,
     emptyReads = 0;
+  const total = options.totalBlocks ?? 200;
+  let acknowledged = 0;
   const queue: number[] = [],
     calls: { method: string; args: any; at: number }[] = [];
   const advance = () => {
     time += options.latency ?? 70;
-    const end = Math.min(200, Math.floor(time / 10)); // 16 kHz / 160 samples = 100 blocks/s.
+    const end = Math.min(total, Math.floor(time / 10)); // 16 kHz / 160 samples = 100 blocks/s.
     while (produced < end) {
       if (queue.length === 32) {
         queue.shift();
@@ -34,6 +45,7 @@ function fixture(
   const ack = (sequence: number) => {
     assert(sequence <= highest, 'device ACK preceded durable host receipt');
     while (queue.length && queue[0] < sequence) queue.shift();
+    acknowledged = Math.max(acknowledged, sequence);
   };
   const chunk = (sequence: number) => {
     const b = Buffer.alloc(91);
@@ -59,18 +71,18 @@ function fixture(
           rejects++;
           return { ok: false, boot_id: 'b', error: 'unknown_mic_argument', result: {} };
         }
-        ack(args.after_sequence as number);
+        if (!options.ignoredAck) ack(args.after_sequence as number);
       }
       const chunks =
         method === 'read_chunk' ? queue.slice(0, Math.min(Number(args.limit), 11)).map(chunk) : [];
-      if (method === 'read_chunk' && produced === 200 && queue.length === 0) {
+      if (method === 'read_chunk' && produced === total && queue.length === 0) {
         emptyReads++;
         return { ok: false, boot_id: 'b', error: 'recording_not_found', result: {} };
       }
       result = {
         sample_rate: 16000,
         recording_id: 'recording',
-        recording: produced < 200,
+        recording: produced < total,
         chunks,
         buffered_chunks: queue.length,
         produced_samples: String(produced * 160),
@@ -78,8 +90,12 @@ function fixture(
         storage_pending: false,
         capture_failed: false,
         storage_requested: 'off',
-        offered_sequence: chunks.length ? chunks.at(-1)!.sequence + 1 : highest,
+        offered_sequence: chunks.length
+          ? chunks.at(-1)!.sequence + 1 + (options.offeredAhead ? 50 : 0)
+          : highest,
+        acknowledged_sequence: acknowledged,
       };
+      if (options.omitRate && method === 'read_chunk') delete result.sample_rate;
     }
     return { ok: true, boot_id: 'b', result };
   };
@@ -135,6 +151,8 @@ test('live capture piggybacks durable ACKs, respects truncated batches, and drai
     assert.equal(f.dropped, 0);
     assert.equal(f.emptyReads, 0); // Final queue snapshot does not need another empty read.
     assert.equal(f.calls.filter((c) => c.method === 'ack').length, 1);
+    assert.equal(f.calls[0].method, 'read_chunk');
+    assert.equal(f.calls.filter((c) => ['read', 'describe'].includes(c.method)).length, 0);
     assert(
       f.calls.some((c) => c.method === 'read_chunk' && c.at < 2000 && 'after_sequence' in c.args),
     );
@@ -181,6 +199,45 @@ test('lost read/ACK responses are not replayed as legacy reads, and non-durable 
         f.calls.filter((c) => c.method === 'read_chunk').length,
         options.failReadAck ? 2 : 1,
       );
+    } finally {
+      await f.close();
+    }
+  }
+});
+test('ACK cursor follows durable received packets, never a higher previously-offered watermark', async () => {
+  const f = fixture({ offeredAhead: true });
+  try {
+    await f.run();
+    assert.equal(f.received.size, 200);
+    assert.equal(f.events.at(-1)!.acknowledged_sequence, 200);
+    assert(f.calls.every((c) => (c.args.after_sequence ?? c.args.next_sequence ?? 0) <= 200));
+    assert.equal(f.events.at(-1)!.ack_mode, 'read_ack');
+  } finally {
+    await f.close();
+  }
+});
+test('a legacy driver silently ignoring the cursor is detected before unbounded duplicate reads', async () => {
+  const f = fixture({ ignoredAck: true, latency: 20 });
+  try {
+    await f.run();
+    assert.equal(f.received.size, 200);
+    assert.equal(f.events.at(-1)!.blocks, 200);
+    assert.equal(f.events.at(-1)!.ack_mode, 'legacy');
+    assert.equal(f.calls.filter((c) => 'after_sequence' in c.args).length, 1);
+  } finally {
+    await f.close();
+  }
+});
+test('the prefetched first batch survives legacy metadata fallback and can finish a stopped capture directly', async () => {
+  for (const omitRate of [false, true]) {
+    const f = fixture({ totalBlocks: 5, omitRate });
+    try {
+      await f.run();
+      assert.equal(f.received.size, 5);
+      assert.equal(f.calls.filter((c) => c.method === 'read_chunk').length, 1);
+      assert.equal(f.calls.filter((c) => c.method === 'read').length, omitRate ? 1 : 0);
+      assert.equal(f.calls.filter((c) => c.method === 'ack').length, 1);
+      assert.equal(f.events.at(-1)!.acknowledged_sequence, 5);
     } finally {
       await f.close();
     }
