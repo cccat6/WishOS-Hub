@@ -6,6 +6,7 @@ export type RemoteRequest = {
   id: number;
   request_id: string;
   boot_id?: string;
+  observed_at_ms?: number;
   route: string;
   payload: Record<string, unknown>;
 };
@@ -155,6 +156,7 @@ export class OsRemoteBridge {
           const key = request.request_id || `${peek.boot_id}:${request.id}`;
           request.request_id = key;
           request.boot_id = peek.boot_id;
+          request.observed_at_ms = Date.now();
           task = {
             boot: peek.boot_id,
             request,

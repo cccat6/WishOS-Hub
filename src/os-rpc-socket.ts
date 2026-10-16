@@ -5,6 +5,19 @@ import type { DeviceRpc } from './os-remote.js';
 const LIMIT = 4096,
   FRAME = 1024,
   HEADER = 12;
+type RpcTiming = {
+  id: number;
+  path: string;
+  method: string;
+  completed_at_ms: number;
+  queue_ms: number;
+  first_frame_ms: number;
+  response_span_ms: number;
+  round_trip_ms: number;
+  total_ms: number;
+  request_bytes: number;
+  response_bytes: number;
+};
 /** A bidirectional WishOS control peer. Calls are ordered by the device event
  * loop; a disconnected or timed-out call has an unknown result, never replayed. */
 export class OsRpcSocket extends EventEmitter {
@@ -21,9 +34,15 @@ export class OsRpcSocket extends EventEmitter {
       timer: NodeJS.Timeout;
       data: Buffer;
       sent: boolean;
+      queuedAt: number;
+      sentAt: number;
+      firstFrameAt?: number;
+      path: string;
+      method: string;
     }
   >();
   private inFlight = 0;
+  private timings: RpcTiming[] = [];
   boot = '';
   private closed = false;
   constructor(readonly socket: WebSocket) {
@@ -40,6 +59,9 @@ export class OsRpcSocket extends EventEmitter {
         if (!total || total > LIMIT || offset > total || p.length - HEADER > total - offset)
           throw Error('rpc_frame_range');
         if (!offset) {
+          const active = this.calls.get(this.inFlight);
+          if (this.boot && active?.sent && active.firstFrameAt === undefined)
+            active.firstFrameAt = performance.now();
           this.inbound = id;
           this.received = 0;
           this.total = total;
@@ -50,7 +72,7 @@ export class OsRpcSocket extends EventEmitter {
         this.received += p.length - HEADER;
         if (this.received === total) {
           this.received = this.total = 0;
-          this.message(JSON.parse(this.buffer.toString('utf8', 0, total)));
+          this.message(JSON.parse(this.buffer.toString('utf8', 0, total)), total);
         }
       } catch {
         socket.close(1002, 'invalid control frame');
@@ -59,7 +81,10 @@ export class OsRpcSocket extends EventEmitter {
     socket.on('close', () => this.close());
     socket.on('error', () => this.close());
   }
-  private message(m: any) {
+  diagnostics() {
+    return { request_window: 1, pending: this.calls.size, recent: this.timings.slice() };
+  }
+  private message(m: any, responseBytes: number) {
     if (!this.boot) {
       if (m.type !== 'hello' || m.abi !== 'wishos-rpc/1' || typeof m.boot_id !== 'string')
         throw Error('rpc_hello_required');
@@ -69,6 +94,23 @@ export class OsRpcSocket extends EventEmitter {
     }
     const call = this.calls.get(m.id);
     if (!call) return;
+    const now = performance.now(),
+      first = call.firstFrameAt ?? now;
+    const ms = (n: number) => Math.round(n * 100) / 100;
+    this.timings.push({
+      id: m.id,
+      path: call.path,
+      method: call.method,
+      completed_at_ms: Date.now(),
+      queue_ms: ms(call.sentAt - call.queuedAt),
+      first_frame_ms: ms(first - call.sentAt),
+      response_span_ms: ms(now - first),
+      round_trip_ms: ms(now - call.sentAt),
+      total_ms: ms(now - call.queuedAt),
+      request_bytes: call.data.length,
+      response_bytes: responseBytes,
+    });
+    if (this.timings.length > 16) this.timings.shift();
     clearTimeout(call.timer);
     this.calls.delete(m.id);
     this.inFlight = 0;
@@ -99,7 +141,17 @@ export class OsRpcSocket extends EventEmitter {
           this.close();
         }
       }, 10000);
-      this.calls.set(id, { resolve, reject, timer, data, sent: false });
+      this.calls.set(id, {
+        resolve,
+        reject,
+        timer,
+        data,
+        sent: false,
+        queuedAt: performance.now(),
+        sentAt: 0,
+        path,
+        method,
+      });
       this.pump();
     });
   };
@@ -110,6 +162,7 @@ export class OsRpcSocket extends EventEmitter {
     const [id, call] = next.value;
     this.inFlight = id;
     call.sent = true;
+    call.sentAt = performance.now();
     const data = call.data;
     try {
       for (let at = 0; at < data.length; at += FRAME - HEADER) {

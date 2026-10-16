@@ -229,7 +229,13 @@ export class ConnectorServer {
       peer.socket.close(1008, 'device not configured');
       return;
     }
-    const detach = route.attach(name, peer.rpc, peer.boot, () => peer.socket.terminate());
+    const detach = route.attach(
+      name,
+      peer.rpc,
+      peer.boot,
+      () => peer.socket.terminate(),
+      () => peer.diagnostics(),
+    );
     peer.once('closed', detach);
   }
   private async apply(next: ConnectorConfig, persist = true) {

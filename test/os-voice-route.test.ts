@@ -141,6 +141,12 @@ test('live capture piggybacks durable ACKs, respects truncated batches, and drai
     assert(f.events.some((e) => e.phase === 'receiving' && e.blocks > 0));
     assert(f.events.some((e) => e.phase === 'drained' && e.acknowledged_sequence === 200));
     assert.equal(f.events.at(-1)!.phase, 'accepted');
+    const completed = f.events.at(-1)!;
+    assert.equal(completed.ack_mode, 'read_ack');
+    assert.equal(completed.standalone_acks, 1);
+    assert(completed.piggyback_acks > 0);
+    assert(completed.first_batch_at_ms! >= completed.collector_started_at_ms);
+    assert(completed.first_ack_at_ms! >= completed.first_batch_at_ms!);
   } finally {
     await f.close();
   }
@@ -153,6 +159,8 @@ test('an explicit unsupported read/ACK field selects legacy ACK once without los
     assert.equal(f.received.size, 200);
     assert.equal(f.rejects, 1);
     assert(f.calls.filter((c) => c.method === 'ack').length > 1);
+    assert.equal(f.events.at(-1)!.ack_mode, 'legacy');
+    assert.equal(f.events.at(-1)!.piggyback_acks, 0);
   } finally {
     await f.close();
   }

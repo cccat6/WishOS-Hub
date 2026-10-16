@@ -26,6 +26,13 @@ export type AudioDeliveryProgress = {
   device_dropped_samples: string;
   error?: string;
   cleanup_error?: string;
+  request_observed_at_ms?: number;
+  collector_started_at_ms: number;
+  first_batch_at_ms?: number;
+  first_ack_at_ms?: number;
+  ack_mode: 'read_ack' | 'legacy';
+  piggyback_acks: number;
+  standalone_acks: number;
 };
 const pause = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
@@ -113,6 +120,11 @@ export function voiceRoute(
       max_read_ms: 0,
       max_ack_gap_ms: 0,
       device_dropped_samples: '0',
+      request_observed_at_ms: r.observed_at_ms,
+      collector_started_at_ms: Date.now(),
+      ack_mode: 'read_ack',
+      piggyback_acks: 0,
+      standalone_acks: 0,
     };
     const publish = () => {
       progress.elapsed_ms = Math.round(performance.now() - started);
@@ -124,6 +136,7 @@ export function voiceRoute(
         progress.max_ack_gap_ms = Math.max(progress.max_ack_gap_ms, Math.round(now - lastAck));
         lastAck = now;
         progress.acknowledged_sequence = sequence;
+        progress.first_ack_at_ms ??= Date.now();
       }
     };
     publish();
@@ -161,19 +174,25 @@ export function voiceRoute(
               )
                 throw error;
               piggyback = false;
+              progress.ack_mode = 'legacy';
               await device('ack', { recording_id: id, next_sequence: pendingAck });
+              progress.standalone_acks++;
               acknowledged(pendingAck!);
               capture = await device('read_chunk', {
                 recording_id: id,
                 limit: options.batchBlocks ?? 16,
               });
             }
-            if (piggyback && pendingAck !== undefined) acknowledged(pendingAck);
+            if (piggyback && pendingAck !== undefined) {
+              acknowledged(pendingAck);
+              progress.piggyback_acks++;
+            }
             pendingAck = undefined;
             progress.reads++;
             progress.read_ms = Math.round(performance.now() - began);
             progress.max_read_ms = Math.max(progress.max_read_ms, progress.read_ms);
             progress.device_dropped_samples = capture.dropped_samples ?? '0';
+            if (capture.chunks.length) progress.first_batch_at_ms ??= Date.now();
           } catch (error) {
             if (!(error instanceof Error) || error.message !== 'recording_not_found' || !archive)
               throw error;
@@ -196,6 +215,7 @@ export function voiceRoute(
             pendingAck = capture.offered_sequence;
             if (!piggyback) {
               await device('ack', { recording_id: id, next_sequence: pendingAck });
+              progress.standalone_acks++;
               acknowledged(pendingAck!);
               pendingAck = undefined;
             }
@@ -210,6 +230,7 @@ export function voiceRoute(
           if (!capture.recording && drained && !capture.storage_pending) {
             if (pendingAck !== undefined) {
               await device('ack', { recording_id: id, next_sequence: pendingAck });
+              progress.standalone_acks++;
               acknowledged(pendingAck);
             }
             progress.phase = 'drained';

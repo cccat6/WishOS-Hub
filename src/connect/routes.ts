@@ -7,6 +7,7 @@ type Route = {
   priority: number;
   generation: number;
   close?: () => void;
+  diagnostics?: () => unknown;
 };
 /** Pick a route per operation. Never re-run a request whose write may have reached
  * a device; operation receipts, rather than another transport, reconcile it. */
@@ -18,7 +19,13 @@ export class DeviceRoutes {
     return this.pending > 0;
   }
   constructor(readonly id: string) {}
-  attach(name: RouteName, rpc: DeviceRpc, boot: string, close?: () => void) {
+  attach(
+    name: RouteName,
+    rpc: DeviceRpc,
+    boot: string,
+    close?: () => void,
+    diagnostics?: () => unknown,
+  ) {
     for (const [key, route] of this.routes)
       if (route.boot !== boot) {
         this.routes.delete(key);
@@ -26,7 +33,14 @@ export class DeviceRoutes {
       }
     const prior = this.routes.get(name),
       generation = ++this.generation;
-    this.routes.set(name, { rpc, boot, priority: name === 'lan' ? 0 : 1, generation, close });
+    this.routes.set(name, {
+      rpc,
+      boot,
+      priority: name === 'lan' ? 0 : 1,
+      generation,
+      close,
+      diagnostics,
+    });
     prior?.close?.();
     return () => {
       if (this.routes.get(name)?.generation === generation) this.routes.delete(name);
@@ -66,6 +80,7 @@ export class DeviceRoutes {
       boot_id: selected?.[1].boot,
       available_routes: [...this.routes.keys()],
       failover: 'next_operation_no_mutation_replay',
+      ...(selected?.[1].diagnostics ? { diagnostics: selected[1].diagnostics() } : {}),
     };
   }
   close() {
