@@ -28,3 +28,5 @@ more RAM; network polling budget and actual storage delay remain independent. St
 can report `nfs_stop_pending`: the listener has stopped, but final storage cleanup
 has not succeeded, so the provider remains pinned. Resolve the failure and call stop
 again; do not power off or report a completed stop prematurely.
+
+`start` may declare `lifetime:"owner"` (default: follows the calling instance) or `lifetime:"system"` (continues after that application exits, until explicit stop or reboot). The factory settings switch uses the system lifetime so leaving Settings does not turn file sharing off. These are service lifetimes, not a privileged settings application. `read.lifetime` reports the actual owner scope.

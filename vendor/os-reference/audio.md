@@ -110,3 +110,13 @@ an incompatible input change ends detection with an explicit failure. Never trea
 R as a third microphone or claim AEC merely because the wire exists. Detector
 processing duration/sample counters are observations of that pipeline, not total
 system CPU utilization.
+
+For asynchronous remote input, discover `delivery_ttl_ms` in the capture adapter's
+settings. A positive value retains bounded compressed RAM delivery after the
+originating runtime exits, until it is acknowledged/released or expires. Hardware
+capture still stops on owner exit. This is delivery buffering, not recording
+history, and does not enable internal-Flash storage. Session capacity and ring loss
+remain explicit. The S3 factory suite selects a 30-second delivery TTL and a
+caller-sized ring; these are replaceable application policy.
+
+Capture start acceptance can precede native admission/initialization. Wait for `started` (first nonempty input frame), not just `state:starting`, before signaling readiness. Cancelling before that first frame still terminates the capture and releases its input claim. On the S3 ES7210/ES8311 composition, transient internal-memory pressure waits up to `/dev/audio.start_timeout_ms` (configurable); timeout fails the accepted operation. The native audio worker arbitrates codec/amplifier I2C and never blocks the application event loop while waiting for that bus.

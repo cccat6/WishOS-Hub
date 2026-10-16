@@ -25,6 +25,14 @@ UI 描述交给系统渲染，应用提供内容和行为；出厂套装也是�
 不把应用专属页面或流程写入内核。用系统事件和回调协调并发；刷新中不能打断显示驱动。
 应用须有简明的输入说明、首次引导、帮助、反馈及返回方式，保留系统独立 home/voice 入口。
 
+支持字段由目标实时声明。当前版本参考的 dynamic-ui 说明 `labelProps.metrics:"ink"`、
+`longMode`、`style.lineHeight`、content 尺寸、flex 对齐、`imageProps.fit` 与 qrcode 节点；
+先核对能力再采用，不把新参考当成旧固件的能力。`/sys/ui fonts` 若返回 scalable 系统字体，
+按其 minimum_size/maximum_size 使用，不按恢复字库的离散字号猜测。
+应用图标从 manifest 元数据解析；相对路径以所属 manifest 目录为基准。
+临时网页会话与退出确认读 applications 指南，通过已声明系统服务实现，不特判 settings 应用。
+退出设置后仍需运行的 NFS 等服务按其声明显式选择 system lifetime；普通 owner 资源随实例退出清理。
+
 确定性工作本地执行。通过系统 AI 服务请求推理或上游处理，不自行适配 Harness 协议。
 轻量 HTTP/API 可使用系统网络服务；重资源交给上游提炼、渲染或索引后单独传输。
 可只交付 UI 资源，无需为一次显示强行安装完整应用。

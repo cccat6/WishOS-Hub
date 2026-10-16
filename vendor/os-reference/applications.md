@@ -92,3 +92,9 @@ Installation volumes are system policy. `/sys/apps read` and `describe` return
 action may call `configure {install_providers:[...],persist:true}`. The whole change
 is validated, including existing catalog references, and rejection preserves the
 previous policy. Writable volume presence does not itself grant installation.
+
+## Bounded exit confirmation
+
+A foreground instance may call `/sys/apps guard_exit {enabled:true,timeout_ms:30000}` while it owns a live operation that needs a departure decision. On `exit_requested`, render ordinary confirmation UI and call `resolve_exit {operation_id,allow}`. A rejected or timed-out transition leaves the existing instance running; `exit_cancelled` tells it to dismiss an expired prompt. Only that foreground owner can answer. Repeating the independent system Home bypasses the guard, and a fault cannot trap the user. Turn the guard off when the reason disappears. This is a lifecycle boundary, not a settings-specific privilege.
+
+For a browser workflow, bind `/net/http-server session {action:"open",path}` to an application route, ping the returned id before its 30000 ms TTL, and close on page exit. Owner-scoped `read.clients` reports live peers. Route replacement/owner exit invalidates the session; an expired client must not silently reattach to another application instance. These leases track liveness, not credentials.

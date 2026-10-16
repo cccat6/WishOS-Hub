@@ -1,7 +1,7 @@
 {
   "format": "wishos-source-snapshot/1",
   "repository": "https://github.com/cccat6/WishOS",
-  "commit": "41d7099ef4905df3967ca5ef0474a6b11f1a72ab",
+  "commit": "711078fd0e09fe6f640ea035ed9a825346d8eae3",
   "files": [
     {
       "id": "resource-model",
@@ -15,7 +15,7 @@
       "path": "skills/agentic-notes-hardware/references/runtime-apps.md",
       "file": "runtime-apps.md",
       "mimeType": "text/markdown",
-      "sha256": "12ece5d6040d7b25ec8049a98df843416881ea4636e4cf45593bead0ca5ac461"
+      "sha256": "775f4c6f99da033c8b580575cd57ae0e8532b1e24c4f356d9340b3ba6189d7a7"
     },
     {
       "id": "callbacks",
@@ -29,14 +29,14 @@
       "path": "skills/agentic-notes-hardware/references/applications.md",
       "file": "applications.md",
       "mimeType": "text/markdown",
-      "sha256": "017e15a4d66b4c166568083998dfc2a8a049a08dc134172e155e1645d9769f70"
+      "sha256": "36d1aff7d63265d128b998684982dedd5a6bd5d0746a9bd9ee0530d6b62b69c8"
     },
     {
       "id": "dynamic-ui",
       "path": "skills/agentic-notes-hardware/references/dynamic-ui.md",
       "file": "dynamic-ui.md",
       "mimeType": "text/markdown",
-      "sha256": "6569d4d0db9a12bf18fe1f92b967fbaa0b95de0fa99a9fb059413e90e850bebb"
+      "sha256": "ebc312c7689bbc4718ea5b46e67bc321d42c7575414d555fd8ec0e3afa5d6d49"
     },
     {
       "id": "display-interface",
@@ -57,7 +57,7 @@
       "path": "skills/agentic-notes-hardware/references/audio.md",
       "file": "audio.md",
       "mimeType": "text/markdown",
-      "sha256": "1039604885da64d07e3db03ce496f9e7a749af8e5dd4866229cf4556e2c0d18f"
+      "sha256": "b9759c850def34766b18310726d587ee7d49212108ea505c4a4636488ebfadfb"
     },
     {
       "id": "interactions",
@@ -85,7 +85,7 @@
       "path": "skills/agentic-notes-hardware/references/nfs-service.md",
       "file": "nfs-service.md",
       "mimeType": "text/markdown",
-      "sha256": "bc1f268ee56313e008c1fa9d58d8d61663cfb48688e41162f124f40d95a4d3aa"
+      "sha256": "78b27bf0dcf49ad8302882553c4e60e089b7dc5a3d70ddbd25c9e4be4bf5c97f"
     },
     {
       "id": "driver-guide",
@@ -106,7 +106,7 @@
       "path": "docs/agent-os-runtime.md",
       "file": "system-runtime.md",
       "mimeType": "text/markdown",
-      "sha256": "a50fb0863600fdd8b5c8967d4471da92b0bc43dfacb868a8954b9885cae1663c"
+      "sha256": "c970ddc27857661f0706ad3a616231999deabe20e59b6955f45f69a76680b410"
     },
     {
       "id": "hardware-packages",
@@ -134,7 +134,7 @@
       "path": "firmware/WishOS/lib/ai.lua",
       "file": "ai.lua",
       "mimeType": "text/x-lua",
-      "sha256": "ec1efeaec70740b4ca0b81baaf87e80860a3710365600a28fb2f74ed43daec3f"
+      "sha256": "4daeb79a3194d0795ef60ecabacd2c93c0ad1d3eb680c4526116fa15e3913d4e"
     }
   ]
 }

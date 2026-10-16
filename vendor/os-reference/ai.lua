@@ -4,7 +4,7 @@ local M={}
 function M.listen(handler,options)
  options=options or {};local pending,listeners,timer={},{},nil
  local function receive(id,step,queued)
-  if queued then handler(queued,function() end);return end
+  if queued then handler(queued,function() end,{id=id,step=step});return end
   local key=tostring(id)..':'..tostring(step)
   if pending[key] then return end
   local r=notes.call('/services/ai','read_action',{id=id,step=step})
@@ -16,7 +16,7 @@ function M.listen(handler,options)
    if ack.ok or ack.error=='ai_action_not_pending' or ack.error=='ai_request_not_found' then pending[key]=nil end
    return ack
   end
-  local ok,result=pcall(handler,r.result.action,done)
+  local ok,result=pcall(handler,r.result.action,done,{id=id,step=step})
   if not ok then done(false)
   elseif result~=false then done(true,type(result)=='table' and result or nil) end
  end

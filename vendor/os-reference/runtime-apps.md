@@ -159,3 +159,10 @@ CLI workflow; `--launcher` explicitly selects the installed application as home.
 driver declares these methods in its composition; the VM contains no device-path
 allowlist. Stream consumption, mounting, detection, recording and playback are
 operations, even when a method name contains “read”.
+
+Volatile providers that declare temporary-file support accept `/fs create
+{file,temporary:true}` from a runtime. Creation is exclusive; ownership follows
+the file entry across rename. Native readers can finish before deferred deletion
+on owner exit. Do not use an in-place overwrite of a displayed image as staging.
+The AI receiver helper passes `(action,done,context)`, where `context.id` and
+`context.step` identify the system task/action; old two-argument handlers still work.

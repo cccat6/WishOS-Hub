@@ -520,7 +520,7 @@ async function checkResolved(
   return {
     format: 'wishos-preflight/1',
     ok: true,
-    validator_version: '1',
+    validator_version: '2',
     content_sha256: contentIdentity(files),
     bytes: String(files.reduce((n, f) => n + f.size, 0)),
     files: files.map((f) => ({ path: f.destination, bytes: String(f.size), sha256: f.sha256 })),

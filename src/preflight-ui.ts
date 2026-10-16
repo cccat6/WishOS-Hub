@@ -16,6 +16,22 @@ export async function preflightUi(
   },
 ) {
   const caps = options.capabilities;
+  const choice = (
+    value: unknown,
+    capability: string,
+    fallback: string,
+    code: string,
+    context: string,
+  ) => {
+    if (
+      value !== undefined &&
+      (typeof value !== 'string' ||
+        !String(caps[capability] ?? fallback)
+          .split(',')
+          .includes(value))
+    )
+      throw new PreflightError(code, { file: context });
+  };
   if (caps.format && caps.format !== 'brookesia-json-ui-0.1.x-subset')
     throw new PreflightError('ui_target_format', { file, detail: caps.format });
   if (
@@ -48,7 +64,7 @@ export async function preflightUi(
         throw new PreflightError('ui_node_id', { file: context });
       ids.add(node.id);
     }
-    for (const key of ['style', 'placement', 'layout', 'labelProps', 'imageProps'])
+    for (const key of ['style', 'placement', 'layout', 'labelProps', 'imageProps', 'qrcodeProps'])
       if (node[key] !== undefined && !object(node[key]))
         throw new PreflightError('ui_node_object', { file: context, detail: key });
     if (
@@ -65,6 +81,17 @@ export async function preflightUi(
         throw new PreflightError('ui_style_type', { file: context, detail: key });
     if (style.textAlign !== undefined && !['left', 'center', 'right'].includes(style.textAlign))
       throw new PreflightError('ui_text_alignment', { file: context });
+    if (style.lineHeight !== undefined) {
+      const raw = style.lineHeight;
+      const height =
+        typeof raw === 'number'
+          ? raw
+          : typeof raw === 'string' && /^[-+]?\d+(dp|sp)?$/.test(raw)
+            ? parseInt(raw, 10)
+            : NaN;
+      if (!Number.isInteger(height) || height < 8 || height > 192)
+        throw new PreflightError('ui_line_height', { file: context });
+    }
     for (const key of ['bgOpacity', 'imageOpacity'])
       if (
         style[key] !== undefined &&
@@ -81,7 +108,17 @@ export async function preflightUi(
             : typeof raw === 'string' && /^[-+]?\d+(dp|sp)?$/.test(raw)
               ? parseInt(raw, 10)
               : 24;
-      if (fonts.length && !fonts.some((f: any) => f.size === size))
+      if (
+        fonts.length &&
+        !fonts.some(
+          (f: any) =>
+            f.size === size ||
+            (f.scalable === true &&
+              Number.isInteger(size) &&
+              size >= (f.minimum_size ?? caps.scalable_font_sizes?.minimum) &&
+              size <= (f.maximum_size ?? caps.scalable_font_sizes?.maximum)),
+        )
+      )
         throw new PreflightError('ui_system_font_size', { file: context });
     }
     const layout = node.layout ?? {};
@@ -92,6 +129,8 @@ export async function preflightUi(
         !['row', 'column'].includes(layout.flexFlow))
     )
       throw new PreflightError('ui_layout_not_supported', { file: context });
+    for (const key of ['mainAlign', 'crossAlign'])
+      choice(layout[key], 'flex_alignment', 'start', 'ui_flex_alignment', context);
     if (node.labelProps?.text !== undefined && typeof node.labelProps.text !== 'string')
       throw new PreflightError('ui_label_text', { file: context });
     if (
@@ -99,6 +138,16 @@ export async function preflightUi(
       !['error', 'replace'].includes(node.labelProps.missingGlyph)
     )
       throw new PreflightError('ui_missing_glyph_policy', { file: context });
+    choice(node.labelProps?.metrics, 'label_metrics', 'line', 'ui_label_metrics', context);
+    choice(node.labelProps?.longMode, 'label_overflow', 'wrap', 'ui_label_long_mode', context);
+    choice(node.imageProps?.fit, 'image_fit', 'none', 'ui_image_fit', context);
+    if (
+      node.qrcodeProps !== undefined &&
+      Object.entries(node.qrcodeProps).some(
+        ([key, value]) => key !== 'text' || typeof value !== 'string',
+      )
+    )
+      throw new PreflightError('ui_qrcode_property', { file: context });
     if (node.type === 'image') {
       if (typeof node.imageProps?.src !== 'string' || !node.imageProps.src)
         throw new PreflightError('ui_image_source', { file: context });

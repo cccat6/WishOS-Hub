@@ -528,6 +528,112 @@ test('whole-file update parses complete control sources but does not download un
   }
 });
 
+test('UI preflight follows current target typography, fit and QR declarations without upgrading older devices', async () => {
+  const f = await fixture(),
+    d = device();
+  const caps: any = {
+    format: 'brookesia-json-ui-0.1.x-subset',
+    methods: 'read,capabilities,fonts',
+    nodes: 'viewScreen,container,label,button,image,qrcode',
+    styles: 'font,fontSize,lineHeight',
+    max_nodes: 32,
+    max_depth: 8,
+    max_document_bytes: 16384,
+    label_metrics: 'line,ink',
+    label_overflow: 'wrap,clip,ellipsis',
+    image_fit: 'none,contain,cover',
+    flex_alignment: 'start,center,end',
+  };
+  let target = caps,
+    fonts: any[] = [{ id: 'system', scalable: true, minimum_size: 8, maximum_size: 96 }];
+  const calls: string[] = [];
+  const rpc: DeviceRpc = async (path, method, args) => {
+    calls.push(method);
+    if (path === '/sys/ui' || (path === '/sys/capabilities' && args.path === '/sys/ui'))
+      return { ok: true, boot_id: 'boot', result: method === 'fonts' ? { fonts } : target };
+    return d.rpc(path, method, args);
+  };
+  const image = await stage(f.source, 'icon.bin', 'image-bytes');
+  const check = async (node: any) =>
+    preflightBundle(
+      f.source,
+      [
+        await stage(f.source, 'page.json', JSON.stringify({ version: '0.1.1', assets: [node] })),
+        image,
+      ],
+      { rpc, expectedBoot: 'boot', compiler: nodeLuaCompiler, signal: signal() },
+    );
+  const page = () => ({
+    type: 'viewScreen',
+    children: [{ type: 'label', style: { fontSize: 24 }, labelProps: { text: '名称' } }],
+  });
+  try {
+    const report = await check({
+      type: 'viewScreen',
+      layout: { type: 'flex', flexFlow: 'row', mainAlign: 'center', crossAlign: 'center' },
+      children: [
+        {
+          type: 'label',
+          placement: { width: 'content' },
+          style: { fontSize: 23, lineHeight: 30 },
+          labelProps: { text: '完整字库', metrics: 'ink', longMode: 'ellipsis' },
+        },
+        { type: 'image', imageProps: { src: 'icon.bin', fit: 'contain' } },
+        { type: 'qrcode', id: 'url', qrcodeProps: { text: 'http://device.local/app/settings' } },
+      ],
+    });
+    assert(report.ok); // Schema validation only: QR rendering/scanning remains native/physical work.
+    const cases: [string, (node: any) => void][] = [
+      ['ui_label_metrics', (n) => (n.children[0].labelProps.metrics = 'baseline')],
+      ['ui_label_long_mode', (n) => (n.children[0].labelProps.longMode = 'scroll')],
+      [
+        'ui_image_fit',
+        (n) => (n.children = [{ type: 'image', imageProps: { src: 'icon.bin', fit: 'stretch' } }]),
+      ],
+      ['ui_flex_alignment', (n) => (n.layout = { type: 'flex', mainAlign: 'space-around' })],
+      [
+        'ui_qrcode_property',
+        (n) => (n.children = [{ type: 'qrcode', qrcodeProps: { text: 123 } }]),
+      ],
+      ['ui_node_object', (n) => (n.children = [{ type: 'qrcode', qrcodeProps: 'url' }])],
+      ['ui_line_height', (n) => (n.children[0].style.lineHeight = 7)],
+      ['ui_system_font_size', (n) => (n.children[0].style.fontSize = 97)],
+    ];
+    for (const [error, mutate] of cases) {
+      const node = page();
+      mutate(node);
+      await assert.rejects(check(node), new RegExp(error));
+    }
+    target = { ...caps, nodes: 'viewScreen,container,label,button,image', styles: 'font,fontSize' };
+    delete target.label_metrics;
+    delete target.label_overflow;
+    delete target.image_fit;
+    delete target.flex_alignment;
+    fonts = [{ id: 'system', size: 24 }];
+    assert((await check(page())).ok);
+    for (const [error, mutate] of [
+      ['ui_label_metrics', (n: any) => (n.children[0].labelProps.metrics = 'ink')],
+      ['ui_label_long_mode', (n: any) => (n.children[0].labelProps.longMode = 'ellipsis')],
+      [
+        'ui_image_fit',
+        (n: any) =>
+          (n.children = [{ type: 'image', imageProps: { src: 'icon.bin', fit: 'contain' } }]),
+      ],
+      ['ui_flex_alignment', (n: any) => (n.layout = { type: 'flex', mainAlign: 'center' })],
+      ['ui_node', (n: any) => (n.children = [{ type: 'qrcode', qrcodeProps: { text: 'url' } }])],
+      ['ui_style_not_supported', (n: any) => (n.children[0].style.lineHeight = 30)],
+      ['ui_system_font_size', (n: any) => (n.children[0].style.fontSize = 23)],
+    ] as [string, (n: any) => void][]) {
+      const node = page();
+      mutate(node);
+      await assert.rejects(check(node), new RegExp(error));
+    }
+    assert(calls.every((method) => ['read', 'describe', 'capabilities', 'fonts'].includes(method)));
+    assert(d.calls.every((c) => ['read', 'describe'].includes(c.method)));
+  } finally {
+    await f.close();
+  }
+});
 test('UI structure preflight follows external view/image paths and accepts future runtime font bindings', async () => {
   const f = await fixture();
   try {
