@@ -799,7 +799,8 @@ export class Hub {
       if (action === 'begin') return reply(res, 200, this.beginOsAudio(id, stream, data));
       if (action === 'chunks') return reply(res, 200, this.osAudio.append(id, stream, data.chunks));
       if (action === 'retry') return reply(res, 202, this.osAudio.retry(id, stream));
-      if (action === 'abort') return reply(res, 200, this.osAudio.abortUpload(id, stream, data.error));
+      if (action === 'abort')
+        return reply(res, 200, this.osAudio.abortUpload(id, stream, data.error));
       if (action === 'finish') return reply(res, 202, this.osAudio.finish(id, stream, data));
       throw new HttpError(404, 'audio_operation');
     }
