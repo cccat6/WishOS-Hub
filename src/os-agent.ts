@@ -3,16 +3,13 @@ import { nodeLuaCompiler } from './node-lua-compiler.js';
 import { bootRpc } from './device-files.js';
 import { createReadStream } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { authoringInstructions } from './guidance.js';
 import type { RemoteHandler, RemoteRequest, DeviceRpc } from './os-remote.js';
 import { RetryableRemoteError } from './os-remote.js';
 import { ArtifactStore } from './os-artifacts.js';
-import {
-  parseManagedResult,
-  validateAction,
-  validateReferences,
-} from './actions.js';
+import { parseManagedResult, validateAction, validateReferences } from './actions.js';
 export function managedPrompt(requestId: string) {
-  return `WishOS 托管请求 ${requestId}。返回 wishos-result/2 JSON，有序 actions 只分 application/system，可交替。application 使用 {type:"application",recipient:"origin"|"foreground",topic?,data:{},wait?:"processed"|"queued"}；默认 processed 等精确 VM 读取并确认，queued 仅送达，不能充当替换屏障。system 使用 {type:"system",path,method,args:{}} 调用声明资源并等原生完成。先发现能力/预算/组件指南。通过 stage_resource 暂存大资源，轮询完成取得 artifact_id，放入 files:[{path,artifact_id,kind?}]；用 {$asset:"相对路径"} 引用。{$previous:"a/b"} 是上一步结果，空路径取整个结果，勿插入或重排步骤改变其含义。包安装连续步骤为 /sys/apps validate {manifest:{$asset:"app.json"},package:{$asset:"package.json"}} → install {manifest:{$asset:"app.json"},package:{$asset:"package.json"},validation_id:{$previous:"operation_id"},expected_revision:{$previous:"revision"}} → launch {id:{$previous:"application_id"}}。原生验证不执行 on_start；安装卷须符合声明 install_providers，初始 Launcher 与用户应用同层，文件可写性按设备声明。只显示 UI 则使用声明的 /sys/ui，不必安装应用。大动作计划用暂存 JSONL 及 sequence:{path:"actions.jsonl",format:"jsonl"}，每条符合 action_limit_bytes，无固定条数。重 JSON/XML、索引和绘图在上游处理。模型凭据/会话仍归用户 Harness。不要通过 MCP 预执行将要返回的动作；设备系统负责顺序、接收者、失败/取消和资源释放。`;
+  return `WishOS 托管请求 ${requestId}。返回 wishos-result/2 JSON，有序 actions 只分 application/system，可交替。application 使用 {type:"application",recipient:"origin"|"foreground",topic?,data:{},wait?:"processed"|"queued"}；默认 processed 等精确 VM 读取并确认，queued 仅送达，不能充当替换屏障。system 使用 {type:"system",path,method,args:{}} 调用声明资源并等原生完成。先发现能力/预算/组件指南。${authoringInstructions()} 通过 stage_resource 暂存大资源，轮询完成取得 artifact_id，放入 files:[{path,artifact_id,kind?}]；用 {$asset:"相对路径"} 引用。{$previous:"a/b"} 是上一步结果，空路径取整个结果，勿插入或重排步骤改变其含义。包安装连续步骤为 /sys/apps validate {manifest:{$asset:"app.json"},package:{$asset:"package.json"}} → install {manifest:{$asset:"app.json"},package:{$asset:"package.json"},validation_id:{$previous:"operation_id"},expected_revision:{$previous:"revision"}} → launch {id:{$previous:"application_id"}}。原生验证不执行 on_start；安装卷须符合声明 install_providers，初始 Launcher 与用户应用同层，文件可写性按设备声明。只显示 UI 则使用声明的 /sys/ui，不必安装应用。大动作计划用暂存 JSONL 及 sequence:{path:"actions.jsonl",format:"jsonl"}，每条符合 action_limit_bytes，无固定条数。重 JSON/XML、索引和绘图在上游处理。模型凭据/会话仍归用户 Harness。不要通过 MCP 预执行将要返回的动作；设备系统负责顺序、接收者、失败/取消和资源释放。`;
 }
 export function managedAgentRoute(options: {
   rpc: DeviceRpc;

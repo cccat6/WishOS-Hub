@@ -30,6 +30,28 @@ await writeFile(
   ),
 );
 
+const authoringFile = 'skills/wishos-applications/references/authoring-checklist.md';
+const authoringText = await readFile(authoringFile, 'utf8');
+const guidanceReferences = [
+  {
+    id: 'application-checklist',
+    uri: 'wishos://skills/wishos-applications/references/authoring-checklist',
+    mimeType: 'text/markdown',
+    sha256: createHash('sha256').update(authoringText).digest('hex'),
+    source: { repository: 'https://github.com/cccat6/WishOS-Hub', path: authoringFile },
+    text: authoringText,
+  },
+];
+await writeFile(
+  'src/generated/guidance-references.ts',
+  await format(
+    '// Generated from versioned Hub skill references.\nexport const guidanceReferences = ' +
+      JSON.stringify(guidanceReferences, null, 2) +
+      ' as const;\n',
+    { ...formatting, parser: 'typescript' },
+  ),
+);
+
 const snapshot = JSON.parse(await readFile('vendor/os-reference/snapshot.json', 'utf8'));
 const references = await Promise.all(
   snapshot.files.map(async (record) => {

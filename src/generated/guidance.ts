@@ -41,12 +41,12 @@ export const guidance = [
     layer: 'applications',
     uri: 'wishos://skills/wishos-applications',
     mimeType: 'text/markdown',
-    sha256: '1da322f76c5de196148a7c5e3d66aa03cbd094791833f5bf3b3cb9ca354c8941',
+    sha256: 'd23ecb430a3b323c00fbec5caca8685e6cca351ec26331b719ebe856dc73375d',
     source: {
       repository: 'https://github.com/cccat6/WishOS-Hub',
       path: 'skills/wishos-applications/SKILL.md',
     },
-    text: '---\nname: wishos-applications\ndescription: 制作可实时替换的 WishOS Lua/UI 应用，定义页面、样式、导航、按钮行为和回调。通过公开系统能力运行，不修改固件内核。\n---\n\n先读取系统和所选驱动指南、当前设备 schema 与默认初始包来源。\nUI 描述交给系统渲染，应用提供内容和行为；出厂套装也是普通运行时应用。\n用户可在允许的卷安装多个应用及替代 Launcher，默认 Launcher 也是普通目录包；版本切换与文件可写性由系统文件/应用服务管理。\n\n源码匹配声明的 Lua 版本，模块和路径通过运行时接口解析。\n按设备声明复用标准 helper：`/system/lib/input.lua`、`/system/lib/ai.lua`。\n它们在 OS 源库中的路径是 `firmware/WishOS/lib/{input,ai}.lua`；仓库源码路径不是设备 URI，\n不要把标准库当作某硬件初始 UI 的文件再次打包。\n需要 API 细节时可读 get_guidance 的 input-library / ai-library；返回的是固定版本源码参考，\n实际运行仍使用设备声明的标准模块。\n能力调用在生命周期/事件回调中执行；预检编译不执行 on_start，不能证明任意程序语义。\n在 descriptor 声明需求和预算，并处理原生准入/操作失败。\n\n短长按、多击、组合按键、旋转、录音反馈与显示配置选择属于可修改的应用行为。\n不把应用专属页面或流程写入内核。用系统事件和回调协调并发；刷新中不能打断显示驱动。\n应用须有简明的输入说明、首次引导、帮助、反馈及返回方式，保留系统独立 home/voice 入口。\n\n确定性工作本地执行。通过系统 AI 服务请求推理或上游处理，不自行适配 Harness 协议。\n轻量 HTTP/API 可使用系统网络服务；重资源交给上游提炼、渲染或索引后单独传输。\n可只交付 UI 资源，无需为一次显示强行安装完整应用。\n\n更新按 wishos-packages 指南替换完整文件，构造不可变完整 revision 并先预检。\n安装与激活分开；不覆盖运行中版本、系统资源或旧应用的用户数据。\n动态路径无法静态证明时使用正常运行时错误处理，不能声称预检已验证一切。\n',
+    text: '---\nname: wishos-applications\ndescription: 制作可实时替换的 WishOS Lua/UI 应用，定义页面、样式、导航、按钮行为和回调。通过公开系统能力运行，不修改固件内核。\n---\n\n先读取系统和所选驱动指南、当前设备 schema 与默认初始包来源。\n每次制作或修改应用，都先读 [应用交付检查单](references/authoring-checklist.md)，\n也可用 `get_guidance {component_id:"application-checklist"}`。\n交付前逐项核对，记录实现/验证证据或不适用原因；不能以一次静态预检代替行为验收。\n重点明确动态值的数据来源、更新触发、精度与失效反馈，依据实际显示配置的延迟和完成模型\n选择节奏，不从 LCD/EPD 名称推定策略。细节与通用写法按检查单及相关契约读取。\nUI 描述交给系统渲染，应用提供内容和行为；出厂套装也是普通运行时应用。\n用户可在允许的卷安装多个应用及替代 Launcher，默认 Launcher 也是普通目录包；版本切换与文件可写性由系统文件/应用服务管理。\n\n源码匹配声明的 Lua 版本，模块和路径通过运行时接口解析。\n按设备声明复用标准 helper：`/system/lib/input.lua`、`/system/lib/ai.lua`。\n它们在 OS 源库中的路径是 `firmware/WishOS/lib/{input,ai}.lua`；仓库源码路径不是设备 URI，\n不要把标准库当作某硬件初始 UI 的文件再次打包。\n需要 API 细节时可读 get_guidance 的 input-library / ai-library；返回的是固定版本源码参考，\n实际运行仍使用设备声明的标准模块。\n能力调用在生命周期/事件回调中执行；预检编译不执行 on_start，不能证明任意程序语义。\n在 descriptor 声明需求和预算，并处理原生准入/操作失败。\n\n短长按、多击、组合按键、旋转、录音反馈与显示配置选择属于可修改的应用行为。\n不把应用专属页面或流程写入内核。用系统事件和回调协调并发；刷新中不能打断显示驱动。\n应用须有简明的输入说明、首次引导、帮助、反馈及返回方式，保留系统独立 home/voice 入口。\n\n确定性工作本地执行。通过系统 AI 服务请求推理或上游处理，不自行适配 Harness 协议。\n轻量 HTTP/API 可使用系统网络服务；重资源交给上游提炼、渲染或索引后单独传输。\n可只交付 UI 资源，无需为一次显示强行安装完整应用。\n\n更新按 wishos-packages 指南替换完整文件，构造不可变完整 revision 并先预检。\n安装与激活分开；不覆盖运行中版本、系统资源或旧应用的用户数据。\n动态路径无法静态证明时使用正常运行时错误处理，不能声称预检已验证一切。\n',
   },
   {
     id: 'wishos-packages',

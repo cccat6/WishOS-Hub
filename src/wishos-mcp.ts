@@ -1,5 +1,5 @@
 import { bootRpc, readDeviceFile } from './device-files.js';
-import { registerGuidance, guideToolReply } from './guidance.js';
+import { registerGuidance, guideToolReply, authoringInstructions } from './guidance.js';
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod-modern';
 import type { HubApi } from './api-types.js';
@@ -17,7 +17,8 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
         '2024-11-05',
       ],
       instructions:
-        '先读取 wishos://guidance/components 或 get_guidance，按需读 system、drivers、applications、packages 指南和目标组件。发现实时 schema、boot、配置与预算，不从 MCU 推断外设。系统负责执行、渲染、呈现和资源协调；页面、输入含义、导航和调用顺序属于可替换运行时应用，Launcher 与用户应用同层，保留系统独立 home/voice 和声明的恢复入口。应用通过系统 AI 服务调用上游；会话和模型凭据留在用户 Harness。大资源单独 stage，解析/索引/复杂绘图在上游处理。应用安装按声明的 install_providers，普通下载按 transfers 策略和显式配额。托管回复只返回有序 application/system actions，不预先执行；设备拥有顺序、回调、原生完成屏障和清理。变更保留 request_id 与 expected_boot_id，结果不明先查回执，不重放。发现显示配置档及完成模型，不能中断 BUSY。录音为压缩块，无 SD 不隐式写 Flash。',
+        '先读取 wishos://guidance/components 或 get_guidance，按需读 system、drivers、applications、packages 指南和目标组件。发现实时 schema、boot、配置与预算，不从 MCU 推断外设。系统负责执行、渲染、呈现和资源协调；页面、输入含义、导航和调用顺序属于可替换运行时应用，Launcher 与用户应用同层，保留系统独立 home/voice 和声明的恢复入口。应用通过系统 AI 服务调用上游；会话和模型凭据留在用户 Harness。大资源单独 stage，解析/索引/复杂绘图在上游处理。应用安装按声明的 install_providers，普通下载按 transfers 策略和显式配额。托管回复只返回有序 application/system actions，不预先执行；设备拥有顺序、回调、原生完成屏障和清理。变更保留 request_id 与 expected_boot_id，结果不明先查回执，不重放。发现显示配置档及完成模型，不能中断 BUSY。录音为压缩块，无 SD 不隐式写 Flash。' +
+        authoringInstructions(),
     },
   );
   registerGuidance(server);

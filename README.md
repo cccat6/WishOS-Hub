@@ -147,6 +147,14 @@ components come from `get_device_components` and live capability discovery; a
 static guide does not imply that a peripheral exists. References are bundled from
 a pinned WishOS git commit with per-file digests.
 
+Creation and modification share an [authoring checklist](skills/wishos-applications/references/authoring-checklist.md).
+MCP initialization, the authoring prompt, discovery replies and every managed
+text/voice request carry its entry; `get_guidance {component_id:"application-checklist"}`
+reads it without resource browsing or a locally installed Skill. Detailed guidance
+is loaded on demand. This is upstream authoring guidance, not a firmware policy or
+proof that a model followed it. Record applicable review evidence, and distinguish
+static preflight, installation, activation, presentation and behavioral validation.
+
 `prepare_package` constructs a complete sorted inventory, `preflight_bundle`
 checks it without device writes, `deploy_package` delivers and awaits native
 validation/install, and `update_package` makes immutable whole-file revisions.

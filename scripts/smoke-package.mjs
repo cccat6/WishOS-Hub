@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { join, resolve } from 'node:path';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 export async function smokePackage(root) {
   const parserUrl = pathToFileURL(join(root, 'dist/node-lua-compiler.js')).href;
   execFileSync(
@@ -84,7 +85,54 @@ export async function smokePackage(root) {
       }),
     });
     assert(response.ok);
-    assert((await response.text()).includes('protocolVersion'));
+    const decodeMcp = (text) => {
+      const data = text.trim().startsWith('{')
+        ? text
+        : text
+            .split('\n')
+            .find((line) => line.startsWith('data:'))
+            ?.slice(5)
+            .trim();
+      assert(data, 'Packaged MCP response missing data');
+      const message = JSON.parse(data);
+      assert(!message.error, JSON.stringify(message.error));
+      return message.result;
+    };
+    const initialized = decodeMcp(await response.text());
+    assert(initialized.protocolVersion);
+    const { authoringInstructions } = await import(
+      pathToFileURL(join(root, 'dist/guidance.js')).href
+    );
+    assert(initialized.instructions.includes(authoringInstructions()));
+    let requestId = 1;
+    const mcp = async (method, params) => {
+      const reply = await fetch(base + '/mcp', {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer ' + config.localToken,
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+          'MCP-Protocol-Version': initialized.protocolVersion,
+        },
+        body: JSON.stringify({ jsonrpc: '2.0', id: ++requestId, method, params }),
+      });
+      assert(reply.ok);
+      return decodeMcp(await reply.text());
+    };
+    // Exercise compiled guidance from an external cwd, without a local Skill install.
+    const index = await mcp('tools/call', { name: 'get_guidance', arguments: {} });
+    const catalog = JSON.parse(index.content[0].text);
+    const entry = catalog.references.find((r) => r.id === catalog.authoring.component_id);
+    const toolGuide = await mcp('tools/call', {
+      name: 'get_guidance',
+      arguments: { component_id: entry.id },
+    });
+    assert(!toolGuide.isError);
+    const source = await readFile(join(root, entry.source.path), 'utf8');
+    assert.equal(toolGuide.content[0].resource.text, source);
+    assert.equal(createHash('sha256').update(source).digest('hex'), entry.sha256);
+    const resourceGuide = await mcp('resources/read', { uri: entry.uri });
+    assert.equal(resourceGuide.contents[0].text, source);
     console.log(
       JSON.stringify({
         package_smoke: true,
@@ -92,7 +140,14 @@ export async function smokePackage(root) {
         arch: process.arch,
         external_cwd: true,
         python_required: false,
-        checks: ['bundled-runtime', 'http', 'wizard', 'authenticated-mcp', 'stock-lua-wasm'],
+        checks: [
+          'bundled-runtime',
+          'http',
+          'wizard',
+          'authenticated-mcp',
+          'stock-lua-wasm',
+          'authoring-guidance-resource-and-tool',
+        ],
       }),
     );
     execFileSync(

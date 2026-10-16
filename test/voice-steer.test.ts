@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { Hub } from '../src/hub.js';
 import { Store } from '../src/store.js';
 import type { HarnessAdapter } from '../src/adapters/types.js';
+import { authoringInstructions } from '../src/guidance.js';
 function deferred<T>() {
   let resolve!: (value: T) => void, reject!: (error: Error) => void;
   const promise = new Promise<T>((yes, no) => {
@@ -81,7 +82,8 @@ async function setup(options: { unbound?: boolean; noSteer?: boolean } = {}) {
     if (!response.ok) throw Error(body.error);
     return body;
   }
-  const start = (id: string) => api(id, 'begin', { sample_rate: 16000 });
+  const start = (id: string, config: Record<string, unknown> = {}) =>
+    api(id, 'begin', { sample_rate: 16000, ...config });
   async function end(id: string) {
     const packet = Buffer.alloc(91);
     packet[0] = 0x42;
@@ -114,6 +116,28 @@ async function setup(options: { unbound?: boolean; noSteer?: boolean } = {}) {
   }
   return { hub, store, device, adapter, asrs, start, end, voice, status, accepted, close };
 }
+test('managed speech creation and follow-up modification retain the same authoring entry when steering', async () => {
+  const t = await setup();
+  try {
+    for (const [index, text] of ['创建时钟应用', '修改时钟为每分钟更新'].entries()) {
+      const id = 'managed-' + index;
+      await t.start(id, { managed_request: true });
+      await t.end(id);
+      await until(() => t.asrs.length > index);
+      t.asrs[index].resolve(text);
+      const receipt = await t.accepted(id);
+      assert.equal(receipt.state, 'accepted');
+      const sent = index === 0 ? t.adapter.runs[0] : t.adapter.steers[0];
+      assert.equal(sent.session, 'fixed');
+      assert(sent.text.includes(authoringInstructions()));
+      assert(sent.text.endsWith(text));
+    }
+    assert.equal(t.adapter.runs.length, 1);
+    assert.equal(t.adapter.steers.length, 1);
+  } finally {
+    await t.close();
+  }
+});
 test('compressed follow-up steers active native session and creates no display/UI work', async () => {
   const t = await setup();
   try {
