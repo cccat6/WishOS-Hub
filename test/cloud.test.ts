@@ -565,7 +565,7 @@ test('cloud MCP package tools deliver, await native admission and update whole f
     native = new PackageDevice();
   native.boot = wire.boot;
   native.paginatedMounts = true;
-  native.descriptions['/sys/apps'].install_providers = 'card';
+  native.descriptions['/sys/apps'].install_providers = ['card'];
   wire.descriptions = native.descriptions;
   wire.resourceHandler = (c) => native.call(c);
   const call = async (name: string, args: any) => {

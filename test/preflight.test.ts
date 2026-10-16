@@ -1090,7 +1090,7 @@ test('application install providers gate package placement, without restricting 
   try {
     const files = await packageFiles(f.source),
       media = await stage(f.source, 'book.txt', 'data');
-    for (const allowed of ['user', 'flash']) {
+    for (const allowed of ['user', 'flash', ['user'], ['flash'], []]) {
       const d = device();
       const rpc: DeviceRpc = async (p, m, a) => {
         if (p === '/sys/capabilities' && a.path === '/sys/apps') {
@@ -1125,8 +1125,10 @@ test('application install providers gate package placement, without restricting 
           expectedBoot: 'boot',
           signal: signal(),
         });
-      if (allowed === 'user') await assert.rejects(check(), /application_storage_provider/);
-      else assert.equal((await check()).limits.application_install_providers, 'flash');
+      if (!allowed.length) await assert.rejects(check(), /application_storage_disabled/);
+      else if (typeof allowed === 'string' ? allowed === 'user' : allowed.includes('user'))
+        await assert.rejects(check(), /application_storage_provider/);
+      else assert.deepEqual((await check()).limits.application_install_providers, allowed);
       assert(
         (
           await preflightBundle(f.source, [media], {
@@ -1154,7 +1156,7 @@ test('a transfer target changing after preparation is rechecked before package b
     const rpc: DeviceRpc = async (p, m, a) => {
       if (p === '/sys/capabilities' && a.path === '/sys/apps') {
         const reply = await d.rpc(p, m, a);
-        return { ...reply, result: { ...reply.result, install_providers: 'user' } };
+        return { ...reply, result: { ...reply.result, install_providers: ['user'] } };
       }
       if (p === '/sys/transfers' && m === 'read')
         return {
@@ -1346,6 +1348,46 @@ test('a native transition refusal at stop is a retained failed receipt, not a re
     await jobs.close();
     await recovered?.close();
     db.close();
+    await f.close();
+  }
+});
+
+test('an install policy changed to an empty array after preflight prevents transfer begin', async () => {
+  const f = await fixture(),
+    d = device();
+  let allowed = ['user'],
+    mounts = 0,
+    begins = 0;
+  try {
+    const files = await packageFiles(f.source);
+    const rpc: DeviceRpc = async (p, m, a) => {
+      if (p === '/sys/capabilities' && a.path === '/sys/apps') {
+        const reply = await d.rpc(p, m, a);
+        return { ...reply, result: { ...reply.result, install_providers: [...allowed] } };
+      }
+      if (p === '/sys/transfers' && m === 'read')
+        return {
+          ok: true,
+          boot_id: 'boot',
+          result: { policy: { targets: [{ provider: 'user' }] } },
+        };
+      if (p === '/fs' && m === 'mounts') {
+        if (++mounts === 2) allowed = [];
+        return {
+          ok: true,
+          boot_id: 'boot',
+          result: { providers: [{ id: 'user', available: true }] },
+        };
+      }
+      if (m === 'begin') begins++;
+      return d.rpc(p, m, a);
+    };
+    await assert.rejects(
+      f.source.deliver(rpc, files.files, signal(), 'boot'),
+      /application_storage_disabled/,
+    );
+    assert.equal(begins, 0);
+  } finally {
     await f.close();
   }
 });

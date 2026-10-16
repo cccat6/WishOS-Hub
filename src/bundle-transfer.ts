@@ -118,7 +118,7 @@ export async function deliverBundle(
     if (preflight.packages.length) {
       const apps = await rpc('/sys/capabilities', 'describe', { path: '/sys/apps' });
       if (!apps.ok) throw new ResourceReplyError(apps);
-      if (typeof apps.result.install_providers === 'string') {
+      if (apps.result.install_providers !== undefined) {
         const currentPolicy = await call('read', {}),
           currentVolumes = await readMounts(rpc, signal);
         checkApplicationStorage(apps.result, currentPolicy.policy ?? {}, currentVolumes, false);

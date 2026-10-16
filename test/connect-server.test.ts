@@ -236,7 +236,7 @@ test('local MCP package admission and device-selected component discovery use th
     client = new Client({ name: 'package-local', version: '1' });
   native.boot = wire.boot;
   native.paginatedMounts = true;
-  native.descriptions['/sys/apps'].install_providers = 'card';
+  native.descriptions['/sys/apps'].install_providers = ['card'];
   wire.descriptions = native.descriptions;
   wire.board = {
     component_index: { format: 'wishos-components/1', file: '/system/components.json' },

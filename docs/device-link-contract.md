@@ -59,7 +59,7 @@ promise rollback or immediate native completion.
 ## Application placement
 
 `/sys/apps describe.install_providers` positively declares allowed provider IDs
-(CSV), and `factory_launcher` identifies the configured initial reference. Hub
+(array, with legacy CSV accepted), and `factory_launcher` identifies the configured initial reference. Hub
 preflight checks a package against the current ordered transfer target without
 mounting or writing storage. Explicit delivery may prepare storage, then rechecks
 the actual target before beginning package transfer. Native validation/install
@@ -68,8 +68,9 @@ No MCU family or Flash-size heuristic is used. Initial and user launchers have
 normal application lifecycles. The current terminal design provisions ordinary
 Launcher/page files into LittleFS at `/storage/flash/factory` using the factory
 `runtime.littlefs.bin` image. This is the device package's initial reference, not a
-grant to install user applications on Flash. C6 may still advertise only `user`
-(SD) in install_providers; another package can explicitly permit Flash.
+grant to install user applications on Flash. The 4MB C6 package defaults to `user`
+(SD), while an explicit system configuration can permit Flash. These are defaults
+and current applied policy, not compile-time hardware prohibitions.
 
 `/system` remains read-only for system metadata, standard Lua helpers and the
 ordinary recovery application. Helpers retain `/system/lib/input.lua` and
@@ -115,3 +116,12 @@ Generic system calls and caller-authored ordered actions retain that native
 meaning. Ordinary deployment without the explicit stop flag retains its existing
 policy. Provider availability is read through the complete mounts catalog before
 preparation; an available provider is used without repeating prepare/mount.
+
+
+Install providers are system policy, not a hardware prohibition: `/sys/apps configure`
+accepts `{install_providers:[provider IDs],persist:true}` and validates the complete
+catalog/volume/transition state before applying or restoring it. An empty array
+prohibits user installation. Hub checks arrays and legacy CSV both before side
+effects and after preparation; array metadata never bypasses the gate. Device
+packages choose defaults (4MB defaults to SD); an explicit system action can permit
+Flash. Transfer targets and quotas remain independently configured.

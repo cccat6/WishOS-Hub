@@ -27,6 +27,7 @@ let owner: string | undefined;
 const device = new WireDevice(),
   transfer = new TransferFixture(1024);
 let client: Client | undefined;
+let report: Record<string, unknown> | undefined;
 try {
   const install = await api('/v1/installations', {
     id,
@@ -106,6 +107,8 @@ try {
   assert.equal(createHash('sha256').update(transfer.received).digest('hex'), asset.sha256);
   const native = new PackageDevice();
   native.boot = device.boot;
+  native.paginatedMounts = true;
+  native.descriptions['/sys/apps'].install_providers = ['card'];
   device.descriptions = native.descriptions;
   device.board = {
     component_index: { format: 'wishos-components/1', file: '/system/components.json' },
@@ -170,6 +173,57 @@ try {
     ).id,
   );
   assert.equal(p.preflight.lua.native_call_depth_limit, 32);
+  assert.deepEqual(p.preflight.limits.application_install_providers, ['card']);
+  const failed = async (id: string) =>
+    eventually(async () => {
+      const job = await call('read_resource_job', { id });
+      assert.notEqual(job.state, 'unknown', JSON.stringify(job));
+      return job.state === 'failed' ? job : false;
+    }, 60000);
+  native.descriptions['/sys/apps'].install_providers = [];
+  const emptyPolicy = await call('preflight_bundle', {
+    device_id: 'test-device',
+    expected_boot_id: device.boot,
+    files: p.files,
+  });
+  assert.equal((await failed(emptyPolicy.id)).diagnostics[0].code, 'application_storage_disabled');
+  native.descriptions['/sys/apps'].install_providers = ['card'];
+  native.pendingApplication = 'boot-launcher';
+  const pendingRequest = await call('deploy_package', {
+    device_id: 'test-device',
+    expected_boot_id: device.boot,
+    files: p.files,
+    activate: true,
+    stop_current_before_transfer: true,
+  });
+  assert.match((await failed(pendingRequest.id)).error, /application_transition_pending/);
+  assert.equal(native.active, 'original');
+  assert(!native.calls.some((c) => ['stop', 'mount', 'begin'].includes(c.method)));
+  native.pendingApplication = undefined;
+  device.beforeRespond = (c) => {
+    if (c.path === '/sys/runtime' && c.method === 'stop')
+      native.pendingApplication = 'late-selection';
+  };
+  const refusalRequest = await call('deploy_package', {
+    device_id: 'test-device',
+    expected_boot_id: device.boot,
+    files: p.files,
+    activate: true,
+    stop_current_before_transfer: true,
+  });
+  const refusal = await failed(refusalRequest.id);
+  assert.equal(refusal.error, 'application_transition_pending');
+  assert.equal(refusal.receipts.runtime_stop.ok, false);
+  assert.equal(refusal.receipts.runtime_stop.error, 'application_transition_pending');
+  assert.equal(native.active, 'original');
+  assert.equal(native.pendingApplication, 'late-selection');
+  assert.equal(
+    native.calls.filter((c) => c.path === '/sys/runtime' && c.method === 'stop').length,
+    1,
+  );
+  assert(!native.calls.some((c) => c.method === 'mount' || c.method === 'begin'));
+  device.beforeRespond = undefined;
+  native.pendingApplication = undefined;
   const installed = await finish(
     (
       await call('deploy_package', {
@@ -181,6 +235,10 @@ try {
     ).id,
   );
   assert.equal(installed.state, 'activated');
+  assert(
+    native.calls.some((c) => c.path === '/fs' && c.method === 'mounts' && c.args.cursor === 4),
+  );
+  assert(!native.calls.some((c) => c.path === '/dev/media' && c.method === 'mount'));
   let readReconnect = false,
     reconnectFailure: unknown;
   device.beforeRespond = async (c) => {
@@ -246,40 +304,38 @@ try {
   assert.equal(native.revision, 3);
   assert.equal(
     native.calls.filter((c) => c.path === '/sys/runtime' && c.method === 'stop').length,
-    1,
+    2,
   );
 
-  console.log(
-    JSON.stringify(
-      {
-        ok: true,
-        origin: base,
-        protocol: client.getNegotiatedProtocolVersion(),
-        checks: [
-          'https',
-          'metadata',
-          'paired-wss',
-          'mcp-device-rpc',
-          'mutation-receipt-no-replay',
-          'temporary-assets',
-          'streamed-bundle-sha256',
-          'mcp-layer-guidance',
-          'boot-scoped-components',
-          'actual-lua-wasm-profile',
-          'bad-code-no-device-write',
-          'package-native-ticket-install-activate',
-          'whole-file-update-local-copy',
-          'explicit-stop-after-preflight-before-preparation',
-          'same-boot-read-recovery-before-single-install',
-        ],
-        physical_device: false,
-        vendor_account: false,
-        at: new Date().toISOString(),
-      },
-      null,
-      2,
-    ),
-  );
+  report = {
+    ok: true,
+    origin: base,
+    protocol: client.getNegotiatedProtocolVersion(),
+    checks: [
+      'https',
+      'metadata',
+      'paired-wss',
+      'mcp-device-rpc',
+      'mutation-receipt-no-replay',
+      'temporary-assets',
+      'streamed-bundle-sha256',
+      'mcp-layer-guidance',
+      'boot-scoped-components',
+      'actual-lua-wasm-profile',
+      'bad-code-no-device-write',
+      'package-native-ticket-install-activate',
+      'whole-file-update-local-copy',
+      'explicit-stop-after-preflight-before-preparation',
+      'same-boot-read-recovery-before-single-install',
+      'paginated-storage-target-and-ready-volume-no-remount',
+      'application-transition-admission',
+      'empty-install-policy-denial',
+      'native-stop-refusal-receipt-no-replay',
+    ],
+    physical_device: false,
+    vendor_account: false,
+    at: new Date().toISOString(),
+  };
 } finally {
   await client?.close();
   await device.close();
@@ -292,3 +348,5 @@ try {
     assert(r.ok, 'Synthetic installation cleanup failed');
   }
 }
+
+console.log(JSON.stringify({ ...report, cleanup: true }, null, 2));

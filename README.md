@@ -175,8 +175,11 @@ runtime stop, then performs preparation/transfer. Failure may leave that runtime
 stopped or a new revision installed; consult receipts. No implicit retry, automatic
 restoration or reduction of native resource protections occurs.
 
-Application storage is chosen by the device package, not by its MCU or Flash size.
-Read `/sys/apps` metadata `install_providers` and `factory_launcher`. The initial
+Application storage has device-package defaults and a runtime-configurable system
+policy; it is not inferred from MCU or Flash size.
+Read `/sys/apps` metadata `install_providers` (array, legacy CSV) and `factory_launcher`.
+System `configure` can change allowed providers; an empty array disables user installs.
+Transfer targets and quotas are separate configuration. The initial
 Launcher is an ordinary directory package; user apps and replacement launchers use
 allowed providers and versioned updates. Writability and fallback paths come from
 the device contract rather than a Hub hardcoded policy. Download targets, priority, explicit Flash fallback and quotas

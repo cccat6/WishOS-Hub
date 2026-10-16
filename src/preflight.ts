@@ -36,8 +36,16 @@ export function checkApplicationStorage(
   providers: any[],
   includePreparation: boolean,
 ) {
-  if (typeof metadata.install_providers !== 'string') return;
-  const allowed = metadata.install_providers.split(',');
+  const declared = metadata.install_providers;
+  if (declared === undefined) return;
+  const allowed = Array.isArray(declared)
+    ? declared
+    : typeof declared === 'string'
+      ? declared.split(',').filter(Boolean)
+      : null;
+  if (!allowed || allowed.some((id) => typeof id !== 'string'))
+    throw new PreflightError('application_storage_policy');
+  if (!allowed.length) throw new PreflightError('application_storage_disabled');
   for (const target of policy.targets ?? []) {
     const volume = providers.find((p) => p.id === target.provider);
     if (!volume || (!volume.available && !(includePreparation && volume.prepare))) continue;
@@ -218,7 +226,7 @@ async function checkResolved(
   }
   if (options.rpc && (headers.length || manifests.length)) {
     apps = await describe('/sys/apps');
-    if (typeof apps.install_providers === 'string') {
+    if (apps.install_providers !== undefined) {
       const transfer = await read('/sys/transfers', 'read'),
         volumes = await readMounts(async (path, method, args) => {
           const result = await read(path, method, args);
@@ -527,7 +535,7 @@ async function checkResolved(
         ? { runtime_memory_budget_semantics: runtime.memory_budget_semantics }
         : {}),
       package: apps.package_validation ?? null,
-      ...(typeof apps.install_providers === 'string'
+      ...(apps.install_providers !== undefined
         ? {
             application_install_providers: apps.install_providers,
             factory_launcher: apps.factory_launcher,
