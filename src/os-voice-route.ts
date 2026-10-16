@@ -115,6 +115,7 @@ export function voiceRoute(
       if (!saved.ok) throw Error(saved.error);
       capture = { sample_rate: saved.result.metadata.sample_rate_hz };
     }
+    signal.throwIfAborted();
     await api(
       id,
       'begin',
@@ -216,6 +217,7 @@ export function voiceRoute(
                   throw error;
                 rejected = true;
               }
+              signal.throwIfAborted();
               // An undeclared old adapter may ignore the field instead of rejecting
               // it. Returned pre-cursor data (or an explicit lower ACK watermark)
               // proves the combined confirmation was not applied.
@@ -260,11 +262,13 @@ export function voiceRoute(
               storage_requested: stored.metadata.retention,
             };
           }
+          signal.throwIfAborted();
           archive = capture.file || archive;
           retention = capture.storage_requested ?? retention;
           if (capture.chunks.length) {
             status = await api(id, 'chunks', { chunks: capture.chunks }, signal);
             if (status.durable !== true) throw Error('audio_durable_receipt_required');
+            signal.throwIfAborted();
             progress.blocks = status.blocks ?? progress.blocks + capture.chunks.length;
             // offered_sequence is a device-wide peek high-water mark, not proof
             // that this host durably received every previously offered packet.
@@ -320,6 +324,7 @@ export function voiceRoute(
             cursor = batch.next_cursor;
           }
         }
+        signal.throwIfAborted();
         status = await api(
           id,
           'finish',
@@ -361,9 +366,17 @@ export function voiceRoute(
     } catch (error) {
       progress.phase = 'failed';
       progress.error = error instanceof Error ? error.message : String(error);
-      if (!(error instanceof RetryableRemoteError) && !signal.aborted) {
+      const retired =
+        signal.reason instanceof Error &&
+        ['request_retired', 'device_boot_changed'].includes(signal.reason.message);
+      if (!(error instanceof RetryableRemoteError) && (!signal.aborted || retired)) {
         try {
-          await api(id, 'abort', { error: progress.error.slice(0, 160) }, signal);
+          await api(
+            id,
+            'abort',
+            { error: progress.error.slice(0, 160) },
+            signal.aborted ? AbortSignal.timeout(5000) : signal,
+          );
         } catch (cleanup) {
           progress.cleanup_error = cleanup instanceof Error ? cleanup.message : String(cleanup);
         }

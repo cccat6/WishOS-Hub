@@ -45,6 +45,7 @@ export class OsRemoteBridge {
   private boot?: string;
   private journal: RemoteJournal;
   private capacity: number;
+  private listing?: boolean;
   get pendingCount() {
     return this.tasks.size;
   }
@@ -137,15 +138,67 @@ export class OsRemoteBridge {
     try {
       let after = 0;
       const seen = new Set<number>();
-      for (let page = 0; page < this.capacity + 1; page++) {
+      let listed: Set<number> | undefined;
+      const observeBoot = (boot: string) => {
+        if (this.boot && this.boot !== boot) {
+          for (const task of this.tasks.values()) task.abort.abort(Error('device_boot_changed'));
+          this.tasks.clear();
+          this.listing = undefined;
+          seen.clear();
+        }
+        this.boot = boot;
+      };
+      // A complete metadata snapshot detects cancellation without repeatedly
+      // fetching every running request's payload plus a trailing empty peek.
+      // Probe only once per boot; older adapters retain the original scan.
+      if (this.listing !== false && [...this.tasks.values()].some((t) => t.state !== 'ready')) {
+        const status = await this.rpc('/services/remote', 'read', {});
+        if (this.closed || signal.aborted) return;
+        observeBoot(status.boot_id);
+        if (
+          !status.ok &&
+          ![
+            'unsupported_method',
+            'method_not_supported',
+            'unknown_method',
+            'resource_not_found',
+          ].includes(status.error ?? '')
+        )
+          throw Error(status.error ?? 'device_remote_status_failed');
+        const rows = status.result?.requests;
+        const complete =
+          status.ok &&
+          Array.isArray(rows) &&
+          status.result.more !== true &&
+          rows.every(
+            (r: any) =>
+              Number.isInteger(r.id) && r.id > 0 && ['queued', 'finished'].includes(r.state),
+          );
+        const queued = complete
+          ? rows.filter((r: any) => r.state === 'queued').map((r: any) => r.id)
+          : [];
+        this.listing =
+          complete &&
+          new Set(queued).size === queued.length &&
+          status.result.pending === queued.length;
+        if (this.listing) {
+          listed = new Set<number>(queued);
+          for (const id of listed) if (this.tasks.has(id)) seen.add(id);
+          const unknown = [...listed].filter((id) => !this.tasks.has(id)).sort((a, b) => a - b);
+          after = unknown.length ? unknown[0]! - 1 : 0;
+          for (const [id, task] of this.tasks)
+            if (listed.has(id) && task.state === 'retry' && Date.now() >= task.retryAt)
+              await this.start(task, signal);
+        }
+      }
+      let discover =
+        !listed ||
+        (this.tasks.size < this.capacity && [...listed].some((id) => !this.tasks.has(id)));
+      for (let page = 0; discover && page < this.capacity + 1; page++) {
         const peek = await this.rpc('/services/remote', 'peek', { after_id: after });
         if (this.closed || signal.aborted) return;
         if (!peek.ok) throw Error(peek.error ?? 'device_peek_failed');
-        if (this.boot && this.boot !== peek.boot_id) {
-          for (const task of this.tasks.values()) task.abort.abort(Error('device_boot_changed'));
-          this.tasks.clear();
-        }
-        this.boot = peek.boot_id;
+        observeBoot(peek.boot_id);
         const request = peek.result as RemoteRequest & { state: string };
         if (request.state === 'empty') break;
         if (!Number.isInteger(request.id) || request.id <= after) break;
@@ -174,6 +227,10 @@ export class OsRemoteBridge {
           await this.start(task, signal);
         } else if (task?.state === 'retry' && Date.now() >= task.retryAt)
           await this.start(task, signal);
+        if (listed)
+          discover =
+            this.tasks.size < this.capacity &&
+            [...listed].some((id) => id > after && !this.tasks.has(id));
       }
       for (const [id, task] of this.tasks) {
         if (!seen.has(id) && task.state !== 'ready') {

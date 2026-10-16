@@ -19,14 +19,19 @@ test('independent services run concurrently; close does not publish late callbac
     boot_id: 'b',
     ok: true,
     result:
-      m === 'peek'
-        ? (requests.find((r) => r.id > Number(a.after_id ?? 0)) ?? { state: 'empty' })
-        : (done.push(a),
-          requests.splice(
-            requests.findIndex((r) => r.id === a.id),
-            1,
-          ),
-          {}),
+      m === 'read'
+        ? {
+            pending: requests.length,
+            requests: requests.map((r) => ({ id: r.id, state: 'queued' })),
+          }
+        : m === 'peek'
+          ? (requests.find((r) => r.id > Number(a.after_id ?? 0)) ?? { state: 'empty' })
+          : (done.push(a),
+            requests.splice(
+              requests.findIndex((r) => r.id === a.id),
+              1,
+            ),
+            {}),
   });
   const bridge = new OsRemoteBridge(
     rpc,
@@ -50,6 +55,161 @@ test('independent services run concurrently; close does not publish late callbac
   finish();
   await turn();
   assert.equal(executions, 1);
+});
+test('a complete outbox list retires cancelled work and discovers only new payloads during a live stream', async () => {
+  const requests = [{ id: 1, request_id: 'one', route: 'slow', payload: {}, state: 'queued' }];
+  let peeks = 0,
+    reads = 0,
+    cancelled = false,
+    finish!: () => void;
+  const gate = new Promise<void>((r) => {
+    finish = r;
+  });
+  const completed: number[] = [];
+  const rpc: DeviceRpc = async (_p, m, a) => {
+    let result: any = {};
+    if (m === 'read') {
+      reads++;
+      result = {
+        pending: requests.length,
+        requests: requests.map((r) => ({ id: r.id, state: 'queued' })),
+      };
+    } else if (m === 'peek') {
+      peeks++;
+      result = requests.find((r) => r.id > Number(a.after_id)) ?? { state: 'empty' };
+    } else if (m === 'complete') {
+      completed.push(Number(a.id));
+      requests.splice(
+        requests.findIndex((r) => r.id === a.id),
+        1,
+      );
+    }
+    return { ok: true, boot_id: 'b', result };
+  };
+  const bridge = new OsRemoteBridge(rpc, {
+    slow: async (_r, s) => {
+      s.addEventListener('abort', () => {
+        cancelled = true;
+      });
+      await gate;
+      return {};
+    },
+    quick: () => ({ done: true }),
+  });
+  const signal = new AbortController().signal;
+  try {
+    await bridge.poll(signal);
+    await turn();
+    const initial = peeks;
+    await bridge.poll(signal);
+    await bridge.poll(signal);
+    assert.equal(peeks, initial);
+    assert.equal(cancelled, false);
+    assert.equal(reads, 2);
+    requests.push({ id: 2, request_id: 'two', route: 'quick', payload: {}, state: 'queued' });
+    await bridge.poll(signal);
+    await turn();
+    await bridge.poll(signal);
+    assert.equal(peeks, initial + 1);
+    assert.deepEqual(completed, [2]);
+    requests.length = 0;
+    await bridge.poll(signal);
+    assert.equal(cancelled, true);
+    assert.equal(bridge.pendingCount, 0);
+  } finally {
+    bridge.close();
+    finish();
+    await turn();
+  }
+});
+test('incomplete advisory listings fall back to payload discovery without treating absent entries as cancellation', async () => {
+  const requests = [{ id: 1, request_id: 'one', route: 'slow', payload: {}, state: 'queued' }];
+  let cancelled = false,
+    peeks = 0,
+    finish!: () => void;
+  const gate = new Promise<void>((r) => {
+    finish = r;
+  });
+  const rpc: DeviceRpc = async (_p, m, a) => ({
+    ok: true,
+    boot_id: 'b',
+    result:
+      m === 'read'
+        ? { pending: 2, requests: [{ id: 1, state: 'queued' }], more: true }
+        : m === 'peek'
+          ? (peeks++, requests.find((r) => r.id > Number(a.after_id)) ?? { state: 'empty' })
+          : {},
+  });
+  const bridge = new OsRemoteBridge(rpc, {
+    slow: async (_r, s) => {
+      s.addEventListener('abort', () => {
+        cancelled = true;
+      });
+      await gate;
+      return {};
+    },
+  });
+  try {
+    await bridge.poll(new AbortController().signal);
+    await turn();
+    const prior = peeks;
+    requests.push({ id: 2, request_id: 'two', route: 'slow', payload: {}, state: 'queued' });
+    await bridge.poll(new AbortController().signal);
+    await turn();
+    assert(peeks > prior);
+    assert.equal(bridge.pendingCount, 2);
+    assert.equal(cancelled, false);
+  } finally {
+    bridge.close();
+    finish();
+    await turn();
+  }
+});
+test('unsupported list probing is bounded to a boot and is reconsidered after replacement', async () => {
+  let boot = 'a',
+    probes = 0,
+    finish!: () => void;
+  const gate = new Promise<void>((r) => {
+    finish = r;
+  });
+  const signals: AbortSignal[] = [];
+  const rpc: DeviceRpc = async (_p, m, a) =>
+    m === 'read'
+      ? (probes++, { ok: false, boot_id: boot, error: 'unsupported_method', result: {} })
+      : {
+          ok: true,
+          boot_id: boot,
+          result:
+            m === 'peek' && Number(a.after_id) < 1
+              ? { id: 1, request_id: boot + ':1', route: 'slow', payload: {} }
+              : { state: 'empty' },
+        };
+  const bridge = new OsRemoteBridge(rpc, {
+    slow: async (_r, s) => {
+      signals.push(s);
+      await gate;
+      return {};
+    },
+  });
+  const signal = new AbortController().signal;
+  try {
+    await bridge.poll(signal);
+    await turn();
+    await bridge.poll(signal);
+    await bridge.poll(signal);
+    assert.equal(probes, 1);
+    boot = 'b';
+    await bridge.poll(signal);
+    await turn();
+    assert(signals[0].aborted);
+    await bridge.poll(signal);
+    assert.equal(probes, 2);
+    assert.equal(bridge.pendingCount, 1);
+  } finally {
+    bridge.close();
+    finish();
+    await turn();
+  }
 });
 test('durable remote receipts survive bridge reconstruction and object key order changes', async () => {
   const db = new DatabaseSync(':memory:'),

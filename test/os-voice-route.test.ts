@@ -15,9 +15,12 @@ function fixture(
     offeredAhead?: boolean;
     omitRate?: boolean;
     totalBlocks?: number;
+    cancelDuringRead?: boolean;
   } = {},
 ) {
   const db = new DatabaseSync(':memory:');
+  const controller = new AbortController(),
+    apiActions: string[] = [];
   const ingress = new OsAudioIngress(db, async () => ({ run_id: 'native-run' }));
   const received = new Set<number>(),
     events: AudioDeliveryProgress[] = [];
@@ -66,6 +69,7 @@ function fixture(
     if (method === 'ack') ack(args.next_sequence as number);
     if (method === 'read' || method === 'read_chunk') {
       if (method === 'read_chunk' && 'after_sequence' in args) {
+        if (options.cancelDuringRead) controller.abort(Error('request_retired'));
         if (options.failReadAck) throw Error('connection_lost');
         if (options.legacy) {
           rejects++;
@@ -102,6 +106,7 @@ function fixture(
   const route = voiceRoute(
     rpc,
     async (id, action, args) => {
+      apiActions.push(action);
       if (action === 'begin') return ingress.begin('device', id, args as any);
       if (action === 'chunks') {
         const result = ingress.append('device', id, args!.chunks as any);
@@ -119,13 +124,15 @@ function fixture(
   const run = () =>
     route(
       { id: 1, request_id: 'request', route: 'voice', payload: { recording_id: 'recording' } },
-      new AbortController().signal,
+      controller.signal,
     );
   return {
     run,
     calls,
     received,
     events,
+    apiActions,
+    pending: () => ingress.pending('device'),
     get dropped() {
       return dropped;
     },
@@ -165,6 +172,19 @@ test('live capture piggybacks durable ACKs, respects truncated batches, and drai
     assert(completed.piggyback_acks > 0);
     assert(completed.first_batch_at_ms! >= completed.collector_started_at_ms);
     assert(completed.first_ack_at_ms! >= completed.first_batch_at_ms!);
+  } finally {
+    await f.close();
+  }
+});
+test('retirement during a batch reply cannot finish the upload or admit ASR after cancellation', async () => {
+  const f = fixture({ cancelDuringRead: true });
+  try {
+    await assert.rejects(f.run, /request_retired/);
+    assert(!f.apiActions.includes('finish'));
+    assert(f.apiActions.includes('abort'));
+    assert.equal(f.pending(), false);
+    assert.equal(f.calls.filter((c) => c.method === 'ack').length, 0);
+    assert.equal(f.events.at(-1)!.phase, 'failed');
   } finally {
     await f.close();
   }
