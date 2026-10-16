@@ -49,6 +49,9 @@ export class OsRemoteBridge {
   get pendingCount() {
     return this.tasks.size;
   }
+  get discoveryMode() {
+    return this.listing === true ? 'snapshot' : 'payload';
+  }
   constructor(
     private rpc: DeviceRpc,
     private handlers: Readonly<Record<string, RemoteHandler>>,
@@ -180,7 +183,7 @@ export class OsRemoteBridge {
         this.listing =
           complete &&
           new Set(queued).size === queued.length &&
-          status.result.pending === queued.length;
+          status.result.pending === queued.length > 0;
         if (this.listing) {
           listed = new Set<number>(queued);
           for (const id of listed) if (this.tasks.has(id)) seen.add(id);

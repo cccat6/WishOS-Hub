@@ -1,9 +1,57 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
+import { readFile } from 'node:fs/promises';
 import { OsRemoteBridge, type DeviceRpc } from '../src/os-remote.js';
 import { SqlRemoteJournal } from '../src/os-journal.js';
 const turn = () => new Promise<void>((resolve) => setImmediate(resolve));
+test('the real native idle snapshot uses a boolean pending field and retires a missing request without another peek', async () => {
+  const snapshot = JSON.parse(
+    await readFile(new URL('./fixtures/native-remote-outbox-idle.json', import.meta.url), 'utf8'),
+  );
+  let peeks = 0,
+    retired = false,
+    finish!: () => void;
+  const gate = new Promise<void>((r) => {
+    finish = r;
+  });
+  const rpc: DeviceRpc = async (_p, m, a) => ({
+    ok: true,
+    boot_id: 'b',
+    result:
+      m === 'read'
+        ? snapshot
+        : m === 'peek'
+          ? (peeks++,
+            Number(a.after_id) < 1
+              ? { id: 1, request_id: 'b:1', route: 'slow', payload: {} }
+              : { state: 'empty' })
+          : {},
+  });
+  const bridge = new OsRemoteBridge(rpc, {
+    slow: async (_r, s) => {
+      s.addEventListener('abort', () => {
+        retired = true;
+      });
+      await gate;
+      return {};
+    },
+  });
+  try {
+    await bridge.poll(new AbortController().signal);
+    await turn();
+    const initial = peeks;
+    await bridge.poll(new AbortController().signal);
+    assert.equal(retired, true);
+    assert.equal(bridge.discoveryMode, 'snapshot');
+    assert.equal(peeks, initial);
+    assert.equal(bridge.pendingCount, 0);
+  } finally {
+    bridge.close();
+    finish();
+    await turn();
+  }
+});
 test('independent services run concurrently; close does not publish late callbacks or replay uncertain work', async () => {
   const db = new DatabaseSync(':memory:'),
     journal = new SqlRemoteJournal(db, 'dev');
@@ -21,7 +69,7 @@ test('independent services run concurrently; close does not publish late callbac
     result:
       m === 'read'
         ? {
-            pending: requests.length,
+            pending: requests.length > 0,
             requests: requests.map((r) => ({ id: r.id, state: 'queued' })),
           }
         : m === 'peek'
@@ -71,7 +119,7 @@ test('a complete outbox list retires cancelled work and discovers only new paylo
     if (m === 'read') {
       reads++;
       result = {
-        pending: requests.length,
+        pending: requests.length > 0,
         requests: requests.map((r) => ({ id: r.id, state: 'queued' })),
       };
     } else if (m === 'peek') {

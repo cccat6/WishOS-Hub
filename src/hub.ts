@@ -458,6 +458,9 @@ export class Hub {
       active_run: this.busy.get(id) ?? null,
       pending_voice: this.osAudio.pending(id),
       audio_delivery: this.audioDelivery.get(id) ?? null,
+      ...(p
+        ? { outbox: { discovery: p.bridge.discoveryMode, pending: p.bridge.pendingCount } }
+        : {}),
     };
   }
   private device(id: string): DeviceConfig {
