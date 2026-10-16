@@ -218,7 +218,7 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
   job(
     'deploy_package',
     'package_deploy',
-    '完整预检后交付、等待原生验证，以匹配票据/catalog revision 安装。激活可选，回执分开；激活失败可能已安装。stop_current_before_transfer 显式启用且须 activate:true，仅在完整检查后停止当前 VM；后续失败可能保持停止，不自动重启/回滚/重试。轮询 job。',
+    '完整预检后交付、等待原生验证，以匹配票据/catalog revision 安装。激活可选，回执分开；激活失败可能已安装。stop_current_before_transfer 显式启用且须 activate:true，仅在完整检查且无应用切换 pending 时停止当前 VM，停止后复核再传输；不取消切换，后续失败可能保持停止，不自动重启/回滚/重试。轮询 job。',
     {
       device_id: z.string(),
       expected_boot_id: z.string(),
@@ -233,7 +233,7 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
   job(
     'update_package',
     'package_update',
-    '以完整替换文件/显式删除构造安装包的新不可变 revision。读取未变化控制源码做完整预检；大资源在设备复制并校验摘要。不做行补丁或静默合并新基线，用户数据不放 revision 内。安装/激活回执分开，停止当前 VM 仅限显式 stop_current_before_transfer 且 activate:true。',
+    '以完整替换文件/显式删除构造安装包的新不可变 revision。读取未变化控制源码做完整预检；大资源在设备复制并校验摘要。不做行补丁或静默合并新基线，用户数据不放 revision 内。安装/激活回执分开，停止当前 VM 仅限显式 stop_current_before_transfer 且 activate:true，停止前后复核应用切换，不取消 pending。',
     {
       device_id: z.string(),
       expected_boot_id: z.string(),

@@ -604,6 +604,50 @@ test('cloud MCP package tools deliver, await native admission and update whole f
         .id,
     );
     assert(!native.calls.some((c) => c.method === 'begin'));
+    native.pendingApplication = 'boot-launcher';
+    const blockedRequest = await call('deploy_package', {
+      device_id: 'device',
+      expected_boot_id: wire.boot,
+      files: prepared.files,
+      activate: true,
+      stop_current_before_transfer: true,
+    });
+    const blocked = await eventually(async () => {
+      const job = await call('read_resource_job', { id: blockedRequest.id });
+      return job.state === 'failed' ? job : false;
+    });
+    assert.match(blocked.error, /application_transition_pending/);
+    assert.equal(native.pendingApplication, 'boot-launcher');
+    assert.equal(native.active, 'original');
+    assert(!native.calls.some((c) => ['stop', 'mount', 'begin'].includes(c.method)));
+    native.pendingApplication = undefined;
+    wire.beforeRespond = (c) => {
+      if (c.path === '/sys/runtime' && c.method === 'stop')
+        native.pendingApplication = 'late-selection';
+    };
+    const nativeRequest = await call('deploy_package', {
+      device_id: 'device',
+      expected_boot_id: wire.boot,
+      files: prepared.files,
+      activate: true,
+      stop_current_before_transfer: true,
+    });
+    const nativeRefusal = await eventually(async () => {
+      const job = await call('read_resource_job', { id: nativeRequest.id });
+      return job.state === 'failed' ? job : false;
+    });
+    assert.equal(nativeRefusal.error, 'application_transition_pending');
+    assert.equal(nativeRefusal.receipts.runtime_stop.ok, false);
+    assert.equal(nativeRefusal.receipts.runtime_stop.error, 'application_transition_pending');
+    assert.equal(native.active, 'original');
+    assert.equal(native.pendingApplication, 'late-selection');
+    assert.equal(
+      native.calls.filter((c) => c.path === '/sys/runtime' && c.method === 'stop').length,
+      1,
+    );
+    assert(!native.calls.some((c) => c.method === 'mount' || c.method === 'begin'));
+    wire.beforeRespond = undefined;
+    native.pendingApplication = undefined;
     const deployed = await finish(
       (
         await call('deploy_package', {
@@ -616,6 +660,7 @@ test('cloud MCP package tools deliver, await native admission and update whole f
     );
     assert.equal(deployed.state, 'activated');
     assert.equal(native.active, 'relay-app');
+    assert(!native.calls.some((c) => c.path === '/dev/media' && c.method === 'mount'));
     assert.equal(native.revision, 1);
     const changed = await stage('main.lua', 'return {version=2}');
     const update = await finish(
@@ -689,7 +734,7 @@ test('cloud MCP package tools deliver, await native admission and update whole f
     );
     assert.equal(
       native.calls.filter((c) => c.path === '/sys/runtime' && c.method === 'stop').length,
-      1,
+      2,
     );
   } finally {
     await client.close();

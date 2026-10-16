@@ -1185,3 +1185,167 @@ test('a transfer target changing after preparation is rechecked before package b
     await f.close();
   }
 });
+
+test('explicit deployment stop rejects pending app switching at admission and after method discovery', async () => {
+  const f = await fixture();
+  const { PackageDevice } = await import('./fixtures/package-device.js'),
+    { deployPackage } = await import('../src/packages.js');
+  try {
+    const p = await packageFiles(f.source);
+    for (const phase of ['admission', 'discovery', 'operation-only']) {
+      const d = new PackageDevice();
+      if (phase === 'admission') d.pendingApplication = 'boot-launcher';
+      const rpc: DeviceRpc = async (path, method, args) => {
+        const reply = await d.rpc(path, method, args);
+        if (phase === 'discovery' && path === '/sys/capabilities' && args.path === '/sys/transfers')
+          d.pendingApplication = 'selected-app';
+        if (phase === 'operation-only' && path === '/sys/apps' && method === 'read')
+          reply.result.pending_operation_id = 17;
+        return reply;
+      };
+      await assert.rejects(
+        deployPackage(f.source, p.files, rpc, d.boot, {
+          compiler: nodeLuaCompiler,
+          signal: signal(),
+          activate: true,
+          stop_current_before_transfer: true,
+        }),
+        /application_transition_pending/,
+      );
+      assert.equal(d.active, 'original');
+      assert.equal(d.revision, 0);
+      assert(
+        !d.calls.some((c) => c.method === 'stop' || c.method === 'mount' || c.method === 'begin'),
+      );
+      if (phase !== 'operation-only') assert(d.pendingApplication);
+    }
+  } finally {
+    await f.close();
+  }
+});
+
+test('a transition crossing the stop boundary retains stop receipt and never cancels or blindly stops again', async () => {
+  const f = await fixture();
+  const { PackageDevice } = await import('./fixtures/package-device.js'),
+    { deployPackage } = await import('../src/packages.js');
+  try {
+    const p = await packageFiles(f.source);
+    for (const phase of ['pending', 'activated', 'catalog-changed']) {
+      const d = new PackageDevice();
+      const rpc: DeviceRpc = async (path, method, args) => {
+        const reply = await d.rpc(path, method, args);
+        if (path === '/sys/runtime' && method === 'stop') {
+          if (phase === 'pending') d.pendingApplication = 'new-selection';
+          if (phase === 'activated') d.active = 'new-selection';
+          if (phase === 'catalog-changed') d.revision++;
+        }
+        return reply;
+      };
+      let failure: any;
+      try {
+        await deployPackage(f.source, p.files, rpc, d.boot, {
+          compiler: nodeLuaCompiler,
+          signal: signal(),
+          activate: true,
+          stop_current_before_transfer: true,
+        });
+      } catch (error) {
+        failure = error;
+      }
+      assert(failure);
+      assert.equal(failure.receipts.runtime_stop.loaded, false);
+      assert.match(
+        failure.message,
+        /application_transition_pending|runtime_became_active|base_revision_changed/,
+      );
+      assert.equal(
+        d.calls.filter((c) => c.path === '/sys/runtime' && c.method === 'stop').length,
+        1,
+      );
+      assert(!d.calls.some((c) => c.method === 'mount' || c.method === 'begin'));
+      assert.equal(d.pendingApplication, phase === 'pending' ? 'new-selection' : undefined);
+      assert.equal(d.active, phase === 'activated' ? 'new-selection' : '');
+    }
+  } finally {
+    await f.close();
+  }
+});
+
+test('an available provider with active-file ownership is used without invoking its mount preparation again', async () => {
+  const f = await fixture();
+  const { PackageDevice } = await import('./fixtures/package-device.js'),
+    { deployPackage } = await import('../src/packages.js');
+  const d = new PackageDevice();
+  try {
+    d.paginatedMounts = true;
+    d.preparationNeedsIdle = true;
+    d.preparationReady = true;
+    d.descriptions['/sys/apps'].install_providers = 'card';
+    const p = await packageFiles(f.source);
+    const result = await deployPackage(f.source, p.files, d.rpc, d.boot, {
+      compiler: nodeLuaCompiler,
+      signal: signal(),
+    });
+    assert.equal(result.state, 'installed');
+    assert.equal(d.active, 'original');
+    assert(!d.calls.some((c) => c.path === '/dev/media' && c.method === 'mount'));
+    assert(d.calls.some((c) => c.path === '/fs' && c.method === 'mounts' && c.args.cursor === 4));
+  } finally {
+    await f.close();
+  }
+});
+
+test('a native transition refusal at stop is a retained failed receipt, not a replayable timeout', async () => {
+  const f = await fixture(),
+    db = new DatabaseSync(':memory:');
+  const { PackageDevice } = await import('./fixtures/package-device.js'),
+    { deployPackage } = await import('../src/packages.js'),
+    { ResourceJobs } = await import('../src/resource-jobs.js'),
+    { HostJobStore } = await import('../src/connect/job-store.js');
+  const d = new PackageDevice(),
+    jobs = new ResourceJobs(new HostJobStore(db));
+  let recovered: InstanceType<typeof ResourceJobs> | undefined;
+  try {
+    const p = await packageFiles(f.source);
+    const rpc: DeviceRpc = async (path, method, args) => {
+      if (path === '/sys/runtime' && method === 'stop') d.pendingApplication = 'native-selection';
+      return d.rpc(path, method, args);
+    };
+    jobs.submit('native-stop-refusal', 'same', 'package_deploy', (s) =>
+      deployPackage(f.source, p.files, rpc, d.boot, {
+        compiler: nodeLuaCompiler,
+        signal: s,
+        activate: true,
+        stop_current_before_transfer: true,
+      }),
+    );
+    await jobs.wait('native-stop-refusal');
+    const failed = jobs.read('native-stop-refusal');
+    assert.equal(failed.state, 'failed');
+    assert.equal(failed.error, 'application_transition_pending');
+    assert.deepEqual(failed.receipts!.runtime_stop, {
+      ok: false,
+      error: 'application_transition_pending',
+      result: {},
+      boot_id: d.boot,
+    });
+    assert.equal(d.active, 'original');
+    assert.equal(d.pendingApplication, 'native-selection');
+    assert(!d.calls.some((c) => c.method === 'mount' || c.method === 'begin'));
+    recovered = new ResourceJobs(new HostJobStore(db));
+    let replayed = 0;
+    recovered.submit('native-stop-refusal', 'same', 'package_deploy', async () => {
+      replayed++;
+      return {};
+    });
+    await recovered.wait('native-stop-refusal');
+    assert.equal(replayed, 0);
+    assert.equal(d.calls.filter((c) => c.path === '/sys/runtime' && c.method === 'stop').length, 1);
+    assert.equal(recovered.read('native-stop-refusal').state, 'failed');
+  } finally {
+    await jobs.close();
+    await recovered?.close();
+    db.close();
+    await f.close();
+  }
+});

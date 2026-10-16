@@ -95,3 +95,23 @@ follow the corresponding returned cursors and more flags; Hub's ordinary package
 preflight does not need this combined resource. Reading these catalogs neither
 mounts/probes media nor builds an index, and it does not change installation or
 download permissions. Local and cloud MCP share this mechanism.
+
+
+## Explicit VM stop and application transitions
+
+For `stop_current_before_transfer`, Hub rejects an application transition already
+reported by `/sys/apps read` at admission and immediately before stopping. It
+rechecks application state after the acknowledged VM stop: a new pending
+transition, active VM or catalog revision change prevents preparation/transfer,
+retaining the stop receipt. This is not cancellation or a reservation of future
+foreground state. Native admission and file leases remain authoritative for later
+concurrency. The terminal is adding atomic rejection of public runtime mutations
+while an application transition is pending. Hub preserves that returned native
+refusal and its receipt; it neither retries the effect nor treats it as a timeout.
+Hub never cancels another transition or blindly stops/retries again.
+
+`/sys/runtime stop` only stops the current VM; it does not cancel apps.pending.
+Generic system calls and caller-authored ordered actions retain that native
+meaning. Ordinary deployment without the explicit stop flag retains its existing
+policy. Provider availability is read through the complete mounts catalog before
+preparation; an available provider is used without repeating prepare/mount.

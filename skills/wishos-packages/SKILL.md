@@ -51,7 +51,11 @@ UI 预检按所选 renderer 的词汇和限制；on_start 可注册字体，结�
 替换前需处理完成屏障时用 wait:processed，而非 queued。大动作计划使用单独 JSONL。
 
 默认保留当前 VM。只有显式 `stop_current_before_transfer:true` 且 activate:true，Hub 才在
-完整预检、boot/revision/方法确认后停止当前运行时。之后失败可能留下已停止的 VM 或已安装
+完整预检、boot/revision/方法确认且没有应用切换 pending 后停止当前运行时。
+停止前再次核对，停止后确认没有新的 pending、运行 VM 或 catalog 变化再进入传输。
+runtime.stop 只停止当前 VM，不取消应用切换；遇到并发变化则保留回执、拒绝继续，
+不替用户取消切换或再次停止。已 available 的卷直接使用，不重复调用其 prepare/mount。
+之后失败可能留下已停止的 VM 或已安装
 但未激活的新版本；检查回执，不隐式重启、降准入要求、自动回滚或改写托管动作。
 
 只读预检可在同 boot 的有界窗口恢复；变更只有被证明尚未发出才可重试。

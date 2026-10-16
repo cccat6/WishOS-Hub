@@ -112,6 +112,8 @@ export class PackageDevice {
         component_index: { format: 'wishos-components/1', file: '/system/components.json' },
       };
     if (path === '/sys/runtime') {
+      if (this.pendingApplication && ['load', 'restart', 'stop'].includes(method))
+        throw Error('application_transition_pending');
       if (method === 'read')
         return { source_limit_bytes: 65536, memory_policy_limit_bytes: 260000 };
       if (method === 'stop') {
@@ -268,7 +270,14 @@ export class PackageDevice {
       }
     }
     if (path === '/sys/apps') {
-      if (method === 'read') return { revision: this.revision, foreground: this.active };
+      if (method === 'read')
+        return {
+          revision: this.revision,
+          foreground: this.active,
+          runtime: !!this.active,
+          pending: this.pendingApplication ?? '',
+          pending_operation_id: this.pendingApplication ? 100 : 0,
+        };
       if (method === 'inspect') {
         if (!this.installed) throw Error('application_not_installed');
         return this.installed;
@@ -349,9 +358,11 @@ export class PackageDevice {
         return { completion_id: 100 };
       }
       if (method === 'read') {
+        const next = this.pendingApplication;
+        this.pendingApplication = undefined;
         if (this.activationCompletionError)
           return { ready: true, event: 'failed', data: { error: this.activationCompletionError } };
-        this.active = this.pendingApplication ?? this.active;
+        this.active = next ?? this.active;
         return { ready: true, event: 'launched', data: { application_id: this.active } };
       }
       if (method === 'release') return { released: true };

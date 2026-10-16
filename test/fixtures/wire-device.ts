@@ -101,8 +101,14 @@ export class WireDevice {
         if (value === undefined) return;
         result = value;
       } else result = { writes: this.writes };
-    } else if (this.resourceHandler) result = await this.resourceHandler(call);
-    else {
+    } else if (this.resourceHandler) {
+      try {
+        result = await this.resourceHandler(call);
+      } catch (failure) {
+        ok = false;
+        error = failure instanceof Error ? failure.message : 'fixture_resource_failure';
+      }
+    } else {
       ok = false;
       error = 'not_found';
     }

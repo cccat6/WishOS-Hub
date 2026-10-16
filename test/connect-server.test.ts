@@ -304,6 +304,50 @@ test('local MCP package admission and device-selected component discovery use th
       (await call('prepare_package', { device_id: 'device', expected_boot_id: wire.boot, files }))
         .id,
     );
+    native.pendingApplication = 'boot-launcher';
+    const blockedRequest = await call('deploy_package', {
+      device_id: 'device',
+      expected_boot_id: wire.boot,
+      files: p.files,
+      activate: true,
+      stop_current_before_transfer: true,
+    });
+    const blocked = await eventually(async () => {
+      const job = await call('read_resource_job', { id: blockedRequest.id });
+      return job.state === 'failed' ? job : false;
+    });
+    assert.match(blocked.error, /application_transition_pending/);
+    assert.equal(native.pendingApplication, 'boot-launcher');
+    assert.equal(native.active, 'original');
+    assert(!native.calls.some((c) => ['stop', 'mount', 'begin'].includes(c.method)));
+    native.pendingApplication = undefined;
+    wire.beforeRespond = (c) => {
+      if (c.path === '/sys/runtime' && c.method === 'stop')
+        native.pendingApplication = 'late-selection';
+    };
+    const nativeRequest = await call('deploy_package', {
+      device_id: 'device',
+      expected_boot_id: wire.boot,
+      files: p.files,
+      activate: true,
+      stop_current_before_transfer: true,
+    });
+    const nativeRefusal = await eventually(async () => {
+      const job = await call('read_resource_job', { id: nativeRequest.id });
+      return job.state === 'failed' ? job : false;
+    });
+    assert.equal(nativeRefusal.error, 'application_transition_pending');
+    assert.equal(nativeRefusal.receipts.runtime_stop.ok, false);
+    assert.equal(nativeRefusal.receipts.runtime_stop.error, 'application_transition_pending');
+    assert.equal(native.active, 'original');
+    assert.equal(native.pendingApplication, 'late-selection');
+    assert.equal(
+      native.calls.filter((c) => c.path === '/sys/runtime' && c.method === 'stop').length,
+      1,
+    );
+    assert(!native.calls.some((c) => c.method === 'mount' || c.method === 'begin'));
+    wire.beforeRespond = undefined;
+    native.pendingApplication = undefined;
     const result = await finish(
       (
         await call('deploy_package', {
@@ -316,6 +360,7 @@ test('local MCP package admission and device-selected component discovery use th
     );
     assert.equal(result.state, 'activated');
     assert.equal(native.active, 'local-app');
+    assert(!native.calls.some((c) => c.path === '/dev/media' && c.method === 'mount'));
     assert.equal(native.ticket, undefined);
     native.preparationNeedsIdle = true;
     const replaced = await stage('main.lua', 'return {version=2}');

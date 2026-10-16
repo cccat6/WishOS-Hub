@@ -93,6 +93,10 @@ async function checked(
 function methods(metadata: any) {
   return String(metadata.methods ?? '').split(',');
 }
+function checkApplicationTransition(state: any) {
+  if (state.pending || state.pending_operation_id)
+    throw new PreflightError('application_transition_pending');
+}
 export class PackageOutcomeUnknown extends Error {
   constructor(
     message: string,
@@ -159,6 +163,7 @@ async function deployPinned(
     revision = options.expected_revision ?? catalog.revision;
   if (!Number.isSafeInteger(revision) || revision < 0) throw new PreflightError('catalog_revision');
   if (catalog.revision !== revision) throw new PreflightError('base_revision_changed');
+  if (options.stop_current_before_transfer) checkApplicationTransition(catalog);
   const transferMetadata = await checked(rpc, '/sys/capabilities', 'describe', {
     path: '/sys/transfers',
   });
@@ -209,7 +214,14 @@ async function deployPinned(
     if (options.stop_current_before_transfer) {
       const current = await checked(rpc, '/sys/apps', 'read');
       if (current.revision !== revision) throw new PreflightError('base_revision_changed');
+      checkApplicationTransition(current);
       await record('runtime_stop', '/sys/runtime', 'stop', {});
+      // VM stop neither cancels an app transition nor reserves the foreground.
+      // Reconcile a concurrent transition before starting transfer/preparation.
+      const stopped = await checked(rpc, '/sys/apps', 'read');
+      checkApplicationTransition(stopped);
+      if (stopped.revision !== revision) throw new PreflightError('base_revision_changed');
+      if (stopped.runtime === true) throw new PreflightError('runtime_became_active');
     }
     const delivered = await deliverBundle(rpc, files, signal, boot, undefined, source, {
       compiler: options.compiler,
