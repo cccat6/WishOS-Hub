@@ -13,6 +13,11 @@ export async function preflightUi(
     reference: (file: string, path: string) => Promise<string>;
     document: (file: string) => Promise<any>;
     fileBytes: (file: string) => number | undefined;
+    fontCoverage?: (
+      font: string,
+      size: number | undefined,
+      codepoints: number[],
+    ) => Promise<number[]>;
   },
 ) {
   const caps = options.capabilities;
@@ -45,6 +50,17 @@ export async function preflightUi(
     styles = String(caps.styles ?? builtInStyles).split(','),
     ids = new Set<string>();
   let count = 0;
+  const coverage = new Map<
+    string,
+    {
+      file: string;
+      font: string;
+      size: number | undefined;
+      points: Set<number>;
+      strict: Set<number>;
+    }
+  >();
+  const warnings: { code: string; file: string; detail: string }[] = [];
   const bound = (path: string) => {
     const size = options.fileBytes(path);
     if (
@@ -148,6 +164,47 @@ export async function preflightUi(
     if (node.labelProps?.text !== undefined && typeof node.labelProps.text !== 'string')
       throw new PreflightError('ui_label_text', { file: context });
     if (
+      options.fontCoverage &&
+      node.type === 'label' &&
+      typeof node.labelProps?.text === 'string'
+    ) {
+      const rawFont = typography.font ?? 'system';
+      const font = /^\$\{font\.([^}]+)\}$/.exec(rawFont)?.[1] ?? rawFont;
+      if (
+        font === 'system' ||
+        font === 'builtin' ||
+        font.startsWith('/') ||
+        caps.fonts?.some((f: any) => f.id === font && !f.owner && !f.retiring)
+      ) {
+        const raw = typography.fontSize;
+        const size =
+          raw === undefined
+            ? undefined
+            : typeof raw === 'number'
+              ? raw
+              : typeof raw === 'string' && /^[-+]?\d+(dp|sp)?$/.test(raw)
+                ? parseInt(raw, 10)
+                : NaN;
+        if (size !== undefined && !Number.isInteger(size))
+          throw new PreflightError('ui_style_type', { file: context, detail: 'fontSize' });
+        const key = JSON.stringify([context, font, size ?? null]);
+        const use = coverage.get(key) ?? {
+          file: context,
+          font,
+          size,
+          points: new Set<number>(),
+          strict: new Set<number>(),
+        };
+        for (const char of node.labelProps.text) {
+          const cp = char.codePointAt(0)!;
+          if (cp === 10 || cp === 13) continue;
+          use.points.add(cp);
+          if (node.labelProps.missingGlyph !== 'replace') use.strict.add(cp);
+        }
+        coverage.set(key, use);
+      } else warnings.push({ code: 'ui_font_coverage_deferred', file: context, detail: font });
+    }
+    if (
       node.labelProps?.missingGlyph !== undefined &&
       !['error', 'replace'].includes(node.labelProps.missingGlyph)
     )
@@ -185,5 +242,22 @@ export async function preflightUi(
       throw new PreflightError('ui_screen_missing', { file: context });
     await walk(node, context, 0, { font: 'system' });
   }
-  return { schema_valid: true, render_ready: false };
+  for (const use of coverage.values()) {
+    const points = [...use.points].sort((a, b) => a - b);
+    if (!points.length) continue;
+    const missing = await options.fontCoverage!(use.font, use.size, points);
+    if (!Array.isArray(missing) || missing.some((cp) => !use.points.has(cp)))
+      throw new PreflightError('ui_font_coverage_reply', { file: use.file });
+    const codes = [...new Set(missing)]
+      .map((cp) => 'U+' + cp.toString(16).toUpperCase().padStart(4, '0'))
+      .join(',');
+    if (missing.some((cp) => use.strict.has(cp)))
+      throw new PreflightError('ui_font_missing_glyph', {
+        file: use.file,
+        detail: `${use.font}${use.size === undefined ? '' : ':' + use.size} ${codes}`,
+      });
+    if (missing.length)
+      warnings.push({ code: 'ui_font_glyph_replacement', file: use.file, detail: codes });
+  }
+  return { schema_valid: true, render_ready: false, warnings };
 }

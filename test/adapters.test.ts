@@ -203,3 +203,22 @@ test('native failed completion is settled but missing/unknown completion evidenc
     }
   }
 });
+
+test('native failure receipts retain safe machine HTTP codes without exposing provider error bodies', async () => {
+  const { HarnessTurnEnded } = await import('../src/adapters/errors.js');
+  const a = new CodexAdapter(rpc('codex'), 1000);
+  try {
+    const session = await a.open();
+    await assert.rejects(
+      a.send(session, 'native-http-error', () => {}),
+      (e: any) =>
+        e instanceof HarnessTurnEnded &&
+        e.message.includes('httpConnectionFailed') &&
+        e.message.includes('HTTP 502') &&
+        !e.message.includes('PRIVATE'),
+    );
+    assert.equal(await a.send(session, 'fresh', () => {}), 'Codex final');
+  } finally {
+    await a.close();
+  }
+});

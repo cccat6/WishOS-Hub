@@ -22,6 +22,19 @@ function sessionMetadata(thread: any): HarnessSession {
     ...(typeof thread.ephemeral === 'boolean' ? { ephemeral: thread.ephemeral } : {}),
   };
 }
+// Retain bounded native reason codes, never provider body/message/credentials.
+function failureCode(error: any) {
+  const info = error?.codexErrorInfo;
+  const code =
+    typeof info === 'string'
+      ? info
+      : info && typeof info === 'object' && Object.keys(info).length === 1
+        ? Object.keys(info)[0]
+        : undefined;
+  if (!code || !/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(code)) return '';
+  const http = typeof info === 'object' ? info[code]?.httpStatusCode : undefined;
+  return `: ${code}${Number.isInteger(http) && http >= 100 && http <= 599 ? ` (HTTP ${http})` : ''}`;
+}
 
 export class CodexAdapter implements HarnessAdapter {
   name = 'codex';
@@ -287,7 +300,10 @@ export class CodexAdapter implements HarnessAdapter {
             p.turn?.status === 'completed'
               ? undefined
               : ['failed', 'interrupted'].includes(p.turn?.status)
-                ? new HarnessTurnEnded(`Codex turn ${p.turn.status}`, p.turn.status)
+                ? new HarnessTurnEnded(
+                    `Codex turn ${p.turn.status}${failureCode(p.turn.error)}`,
+                    p.turn.status,
+                  )
                 : new Error(`Codex turn ${p.turn?.status ?? 'unknown'}`),
           );
         if (m.id !== undefined) {

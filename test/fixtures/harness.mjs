@@ -99,13 +99,25 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
         });
         return;
       }
-      if (p.input[0].text === 'native-failed' || p.input[0].text === 'native-unknown') {
+      if (['native-failed', 'native-unknown', 'native-http-error'].includes(p.input[0].text)) {
         reply({ turn: { id } });
         output({
           method: 'turn/completed',
           params: {
             threadId,
-            turn: { id, status: p.input[0].text === 'native-failed' ? 'failed' : 'unrecognized' },
+            turn: {
+              id,
+              status: p.input[0].text === 'native-unknown' ? 'unrecognized' : 'failed',
+              ...(p.input[0].text === 'native-http-error'
+                ? {
+                    error: {
+                      codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 502 } },
+                      message: 'PRIVATE PROVIDER BODY',
+                      additionalDetails: 'PRIVATE CREDENTIAL VALUE',
+                    },
+                  }
+                : {}),
+            },
           },
         });
         return;

@@ -40,3 +40,9 @@ changes through versioned contracts and tests.
 - Keep native tests, SDK protocol fixtures, package installation smoke checks and
   live-provider validation distinct. Implement available documented interfaces;
   mark external developer-app approval/account prerequisites accurately.
+
+- After context recovery, reread this file and docs/engineering-corrections.md in
+  full, plus the companion ../AGENTS.md and ../docs/engineering-corrections.md
+  read-only. Resume open acceptance against the current source/live identities.
+  Record each confirmed deviation with evidence, owning layer, cause, corrective
+  mechanism and separate Host/build/physical/online validation status.

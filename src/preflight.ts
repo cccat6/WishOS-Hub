@@ -496,8 +496,47 @@ async function checkResolved(
       await reference(file, doc.entry, scope);
       continue;
     }
-    await preflightUi(file, doc, {
+    const declaredFontCheck = uiCaps.font_check;
+    let fontCoverage:
+      | ((font: string, size: number | undefined, points: number[]) => Promise<number[]>)
+      | undefined;
+    if (declaredFontCheck && typeof declaredFontCheck === 'object') {
+      const method = declaredFontCheck.method,
+        maximum = declaredFontCheck.max_codepoints;
+      if (
+        typeof method !== 'string' ||
+        !Number.isSafeInteger(maximum) ||
+        maximum < 1 ||
+        !String(uiCaps.read_methods ?? '')
+          .split(',')
+          .includes(method)
+      )
+        throw new PreflightError('ui_font_check_contract', { file });
+      fontCoverage = async (font, size, points) => {
+        const missing: number[] = [];
+        for (let offset = 0; offset < points.length; offset += maximum) {
+          const batch = points.slice(offset, offset + maximum);
+          const result = await read('/sys/ui', method, {
+            font,
+            ...(size === undefined ? {} : { size }),
+            codepoints: batch,
+          });
+          if (
+            !Array.isArray(result.missing_codepoints) ||
+            result.missing_codepoints.some((cp: unknown) => !batch.includes(cp as number)) ||
+            (typeof result.covered === 'boolean' &&
+              result.covered !== (result.missing_codepoints.length === 0))
+          )
+            throw new PreflightError('ui_font_coverage_reply', { file });
+          missing.push(...result.missing_codepoints);
+        }
+        return missing;
+      };
+    }
+    if (!fontCoverage) warnings.push({ code: 'ui_font_coverage_unverified', file });
+    const uiValidation = await preflightUi(file, doc, {
       capabilities: uiCaps,
+      fontCoverage,
       reference: (file, path) => reference(file, path, scope),
       document: async (path) => {
         if (json.has(path)) return json.get(path);
@@ -516,11 +555,12 @@ async function checkResolved(
       },
       fileBytes: (path) => map.get(path)?.size,
     });
+    warnings.push(...uiValidation.warnings);
   }
   return {
     format: 'wishos-preflight/1',
     ok: true,
-    validator_version: '2',
+    validator_version: '3',
     content_sha256: contentIdentity(files),
     bytes: String(files.reduce((n, f) => n + f.size, 0)),
     files: files.map((f) => ({ path: f.destination, bytes: String(f.size), sha256: f.sha256 })),
@@ -544,6 +584,6 @@ async function checkResolved(
       ui_document_bytes: uiCaps.max_document_bytes ?? null,
     },
     scope:
-      'Declared control files, recognized runtime/UI formats and Lua are checked; ordinary data assets use streamed integrity checks. Content/declared references and advertised requirements only; not arbitrary program semantics, execution peak memory, a heap reservation or successful future native activation',
+      'Declared control files, recognized runtime/UI formats and Lua are checked; ordinary data assets use streamed integrity checks. Static glyph coverage uses advertised current renderer resources only. Dynamic text/bindings and future presentation remain native checks. Content/declared references and advertised requirements only; not arbitrary program semantics, execution peak memory, a heap reservation or successful future native activation',
   };
 }

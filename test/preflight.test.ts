@@ -682,7 +682,10 @@ test('UI structure preflight follows external view/image paths and accepts futur
       signal: signal(),
     });
     assert(result.ok);
-    assert.equal(result.warnings.length, 0);
+    assert.deepEqual(
+      result.warnings.map((w) => w.code),
+      ['ui_font_coverage_unverified'],
+    );
     const invalid = await stage(
       f.source,
       'assets/screen.json',
