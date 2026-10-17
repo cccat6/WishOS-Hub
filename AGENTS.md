@@ -46,3 +46,5 @@ changes through versioned contracts and tests.
   read-only. Resume open acceptance against the current source/live identities.
   Record each confirmed deviation with evidence, owning layer, cause, corrective
   mechanism and separate Host/build/physical/online validation status.
+- Record filesystem paths from local file URLs with fileURLToPath, never
+  URL.pathname; verify handoff paths can be reopened before reporting them.
