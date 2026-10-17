@@ -6,7 +6,7 @@ import { guidanceReferences } from './generated/guidance-references.js';
 export const guidanceIndexUri = 'wishos://guidance/components';
 const checklist = guidanceReferences.find((g) => g.id === 'application-checklist')!;
 export function authoringInstructions() {
-  return `每次制作或修改应用，先读 ${checklist.uri}；不能浏览资源/Skill 时调用 get_guidance {component_id:"${checklist.id}"}。交付前逐项核对并保留实现/验证证据或不适用原因。重点检查动态值来源、更新/精度/失效反馈，按实际显示延迟和完成模型安排更新、输入与回调；字体/布局、生命周期/资源释放、有序结果及分阶段验收详见清单。静态预检不能证明任意程序语义或真机效果。`;
+  return `每次制作或修改应用，先读 ${checklist.uri}；不能浏览资源/Skill 时调用 get_guidance {component_id:"${checklist.id}"}。交付前逐项核对并保留实现/验证证据或不适用原因。未设置的配置继承系统默认；不为普通页面写死字体路径或在应用启动时持久覆盖 font_file，恢复继承用目标声明的 inherit 删除覆盖。重点检查动态值来源、更新/精度/失效反馈，按实际显示延迟和完成模型安排更新、输入与回调；字体/布局、生命周期/资源释放、有序结果及分阶段验收详见清单。静态预检不能证明任意程序语义或真机效果。`;
 }
 export const guidanceCatalog = {
   format: 'wishos-components/1',

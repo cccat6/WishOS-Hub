@@ -54,7 +54,13 @@ export async function preflightUi(
     )
       throw new PreflightError('ui_document_limit', { file: path });
   };
-  const walk = async (node: any, context: string, depth: number): Promise<void> => {
+  type Typography = { font?: string; fontSize?: unknown };
+  const walk = async (
+    node: any,
+    context: string,
+    depth: number,
+    inherited: Typography,
+  ): Promise<void> => {
     if (!object(node) || typeof node.type !== 'string' || !supported.includes(node.type))
       throw new PreflightError('ui_node', { file: context });
     if (++count > caps.max_nodes || depth > caps.max_depth)
@@ -99,15 +105,23 @@ export async function preflightUi(
         (!Number.isInteger(style[key]) || style[key] < 0 || style[key] > 255)
       )
         throw new PreflightError('ui_opacity', { file: context });
-    if ((style.font ?? 'system') === 'system' && Array.isArray(caps.fonts)) {
+    const typography = {
+      font: style.font ?? inherited.font,
+      fontSize: style.fontSize ?? inherited.fontSize,
+    };
+    if (
+      typography.font === 'system' &&
+      typography.fontSize !== undefined &&
+      Array.isArray(caps.fonts)
+    ) {
       const fonts = caps.fonts.filter((f: any) => f.id === 'system'),
-        raw = style.fontSize ?? 24,
+        raw = typography.fontSize,
         size =
           typeof raw === 'number'
             ? raw
             : typeof raw === 'string' && /^[-+]?\d+(dp|sp)?$/.test(raw)
               ? parseInt(raw, 10)
-              : 24;
+              : NaN;
       if (
         fonts.length &&
         !fonts.some(
@@ -155,7 +169,7 @@ export async function preflightUi(
     }
     if (node.children !== undefined) {
       if (!Array.isArray(node.children)) throw new PreflightError('ui_children', { file: context });
-      for (const child of node.children) await walk(child, context, depth + 1);
+      for (const child of node.children) await walk(child, context, depth + 1, typography);
     }
   };
   bound(file);
@@ -169,7 +183,7 @@ export async function preflightUi(
     }
     if (!object(node) || node.type !== 'viewScreen')
       throw new PreflightError('ui_screen_missing', { file: context });
-    await walk(node, context, 0);
+    await walk(node, context, 0, { font: 'system' });
   }
   return { schema_valid: true, render_ready: false };
 }

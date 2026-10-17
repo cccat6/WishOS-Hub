@@ -1517,3 +1517,63 @@ test('an install policy changed to an empty array after preflight prevents trans
     await f.close();
   }
 });
+
+test('UI preflight preserves omitted defaults and inherited font aliases instead of inventing a 24px system font', async () => {
+  const { preflightUi } = await import('../src/preflight-ui.js');
+  const check = async (node: any) =>
+    preflightUi(
+      'page.json',
+      { version: '0.1.1', assets: [node] },
+      {
+        capabilities: {
+          nodes: 'viewScreen,container,label',
+          styles: 'font,fontSize',
+          max_nodes: 16,
+          max_depth: 8,
+          fonts: [{ id: 'system', size: 32 }],
+        },
+        reference: async () => {
+          throw Error('unexpected file resolution');
+        },
+        document: async () => {
+          throw Error('unexpected document');
+        },
+        fileBytes: () => undefined,
+      },
+    );
+  const child = { type: 'label', labelProps: { text: '继承默认' } };
+  assert((await check({ type: 'viewScreen', children: [child] })).schema_valid);
+  assert(
+    (await check({ type: 'viewScreen', style: { fontSize: 32 }, children: [child] })).schema_valid,
+  );
+  assert(
+    (
+      await check({
+        type: 'viewScreen',
+        style: { font: 'reader', fontSize: 19 },
+        children: [child],
+      })
+    ).schema_valid,
+  );
+  assert(
+    (
+      await check({
+        type: 'viewScreen',
+        style: { font: 'reader', fontSize: 19 },
+        children: [{ ...child, style: { font: 'system', fontSize: 32 } }],
+      })
+    ).schema_valid,
+  );
+  await assert.rejects(
+    check({
+      type: 'viewScreen',
+      style: { font: 'reader', fontSize: 19 },
+      children: [{ ...child, style: { font: 'system' } }],
+    }),
+    /ui_system_font_size/,
+  );
+  await assert.rejects(
+    check({ type: 'viewScreen', style: { font: 'system', fontSize: 19 }, children: [child] }),
+    /ui_system_font_size/,
+  );
+});
