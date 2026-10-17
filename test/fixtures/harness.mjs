@@ -75,11 +75,41 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
       held = undefined;
       return;
     }
-    if (m.method === 'turn/interrupt') return reply({});
+    if (m.method === 'turn/interrupt') {
+      reply({});
+      if (held && p.threadId === held.threadId && p.turnId === held.id) {
+        output({
+          method: 'turn/completed',
+          params: { threadId: held.threadId, turn: { id: held.id, status: 'interrupted' } },
+        });
+        held = undefined;
+      }
+      return;
+    }
     if (m.method === 'turn/start') {
       const threadId = p.threadId,
         id = 'turn-' + ++count;
       output({ method: 'turn/started', params: { threadId, turn: { id } } });
+      if (p.input[0].text === 'hold-for-interrupt') {
+        held = { threadId, id };
+        reply({ turn: { id } });
+        output({
+          method: 'item/agentMessage/delta',
+          params: { threadId, turnId: id, delta: 'ready' },
+        });
+        return;
+      }
+      if (p.input[0].text === 'native-failed' || p.input[0].text === 'native-unknown') {
+        reply({ turn: { id } });
+        output({
+          method: 'turn/completed',
+          params: {
+            threadId,
+            turn: { id, status: p.input[0].text === 'native-failed' ? 'failed' : 'unrecognized' },
+          },
+        });
+        return;
+      }
       if (p.input[0].text.startsWith('steer-')) {
         held = { threadId, id, mode: p.input[0].text };
         setTimeout(() => reply({ turn: { id } }), 30);

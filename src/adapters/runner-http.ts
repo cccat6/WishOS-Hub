@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import { HarnessTurnEnded } from './errors.js';
 import type { HarnessAdapter, AgentEvent } from './types.js';
 export async function boundedJson(response: Response, limit = 1024 * 1024) {
   const reader = response.body?.getReader();
@@ -79,6 +80,11 @@ export class RunnerHttpAdapter implements HarnessAdapter {
           .filter((c: any) => c.type === 'output_text')
           .map((c: any) => c.text)
           .join('');
+        if (['failed', 'cancelled'].includes(response.status))
+          throw new HarnessTurnEnded(
+            'runner_' + response.status,
+            response.status === 'failed' ? 'failed' : 'interrupted',
+          );
         if (response.status !== 'completed' || !output) throw Error('runner_turn_incomplete');
         emit({ type: 'text', text: output });
         return output;
@@ -107,8 +113,12 @@ export class RunnerHttpAdapter implements HarnessAdapter {
           emit({ type: 'text', text: run.output });
           return run.output;
         }
-        if (['failed', 'cancelled', 'interrupted', 'unknown'].includes(run.status))
-          throw Error('runner_' + run.status);
+        if (['failed', 'cancelled', 'interrupted'].includes(run.status))
+          throw new HarnessTurnEnded(
+            'runner_' + run.status,
+            run.status === 'failed' ? 'failed' : 'interrupted',
+          );
+        if (run.status === 'unknown') throw Error('runner_' + run.status);
         await delay(250, undefined, { signal });
       }
     } finally {

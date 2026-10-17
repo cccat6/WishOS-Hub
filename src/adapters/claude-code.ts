@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { HarnessTurnEnded } from './errors.js';
 import type { HarnessAdapter, AgentEvent } from './types.js';
 /** Native CLI keeps its own credentials, tools and transcript. WishOS stores only
  * the binding; no message history is replayed into a fabricated replacement. */
@@ -104,7 +105,9 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
         });
         child.once('exit', (code) => {
           clearTimeout(timeout);
-          if (code !== 0 || error || final === undefined) reject(Error('harness_run_failed'));
+          if (final !== undefined && error)
+            reject(new HarnessTurnEnded('harness_run_failed', 'failed'));
+          else if (code !== 0 || final === undefined) reject(Error('harness_run_failed'));
           else resolve(final);
         });
         child.stdin.end(text);

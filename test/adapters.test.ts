@@ -153,3 +153,53 @@ test('Codex refuses a different resumed identity instead of silently retargeting
     await a.close();
   }
 });
+
+test('an acknowledged native interruption settles the exact turn and permits a fresh request without replay or runtime replacement', async () => {
+  const { HarnessTurnEnded } = await import('../src/adapters/errors.js');
+  const a = new CodexAdapter(rpc('codex'), 1000);
+  let ready!: () => void;
+  const admitted = new Promise<void>((r) => (ready = r));
+  try {
+    const session = await a.open();
+    const work = a.send(session, 'hold-for-interrupt', (e) => {
+      if (e.type === 'text' && e.text === 'ready') ready();
+    });
+    const ended = assert.rejects(
+      work,
+      (e: any) => e instanceof HarnessTurnEnded && e.outcome === 'interrupted',
+    );
+    await admitted;
+    await a.interrupt(session);
+    await ended;
+    assert.equal(await a.open(session), session);
+    assert.equal(await a.send(session, 'fresh request', () => {}), 'Codex final');
+  } finally {
+    await a.close();
+  }
+});
+
+test('native failed completion is settled but missing/unknown completion evidence keeps the runtime uncertain', async () => {
+  const { HarnessTurnEnded } = await import('../src/adapters/errors.js');
+  for (const status of ['native-failed', 'native-unknown']) {
+    const a = new CodexAdapter(rpc('codex'), 1000);
+    try {
+      const session = await a.open();
+      await assert.rejects(
+        a.send(session, status, () => {}),
+        (e: any) =>
+          status === 'native-failed'
+            ? e instanceof HarnessTurnEnded && e.outcome === 'failed'
+            : !(e instanceof HarnessTurnEnded),
+      );
+      if (status === 'native-failed')
+        assert.equal(await a.send(session, 'fresh', () => {}), 'Codex final');
+      else
+        await assert.rejects(
+          a.send(session, 'fresh', () => {}),
+          /requires restart/,
+        );
+    } finally {
+      await a.close();
+    }
+  }
+});

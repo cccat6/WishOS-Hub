@@ -4,6 +4,7 @@ import {
   type AccountSpeechAuth,
 } from './codex-dictation.js';
 import { SpeechUnavailable } from '../speech.js';
+import { HarnessTurnEnded } from './errors.js';
 import { RpcProcess, HarnessRpcError } from './rpc.js';
 import type { HarnessAdapter, AgentEvent } from './types.js';
 import { codexUsage } from './usage.js';
@@ -245,7 +246,7 @@ export class CodexAdapter implements HarnessAdapter {
       const finish = (error?: Error) => {
         if (done) return;
         done = true;
-        if (error) this.tainted = true;
+        if (error && !(error instanceof HarnessTurnEnded)) this.tainted = true;
         clearTimeout(timer);
         this.rpc.off('message', message);
         this.rpc.off('closed', closed);
@@ -285,7 +286,9 @@ export class CodexAdapter implements HarnessAdapter {
           finish(
             p.turn?.status === 'completed'
               ? undefined
-              : new Error(`Codex turn ${p.turn?.status ?? 'failed'}`),
+              : ['failed', 'interrupted'].includes(p.turn?.status)
+                ? new HarnessTurnEnded(`Codex turn ${p.turn.status}`, p.turn.status)
+                : new Error(`Codex turn ${p.turn?.status ?? 'unknown'}`),
           );
         if (m.id !== undefined) {
           if (

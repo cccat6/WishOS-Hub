@@ -99,3 +99,44 @@ test('a learned default belongs to its runtime profile and does not leak into a 
     store.close();
   }
 });
+
+test('settled Harness failure remains failed without replay and does not block a new request; unknown failure still requires reconciliation', async () => {
+  const { HarnessTurnEnded } = await import('../src/adapters/errors.js');
+  for (const known of [true, false]) {
+    const store = new Store(':memory:');
+    let calls = 0;
+    const adapter = new SessionFixture();
+    adapter.send = async () => {
+      calls++;
+      if (calls === 1)
+        throw known
+          ? new HarnessTurnEnded('Codex turn interrupted', 'interrupted')
+          : Error('lost native turn receipt');
+      return 'fresh result';
+    };
+    const hub = new Hub({
+      store,
+      adminToken: '',
+      devices: [{ id: 'board', token: '', sessionId: 'fixed-session', adapter }],
+    });
+    try {
+      const old = hub.startRun('board', { request_id: 'old', text: 'old request' });
+      await until(() => store.run(old.id).status !== 'running');
+      assert.equal(store.run(old.id).status, known ? 'failed' : 'uncertain');
+      assert.equal(hub.startRun('board', { request_id: 'old', text: 'old request' }).id, old.id);
+      assert.equal(calls, 1);
+      if (known) {
+        const fresh = hub.startRun('board', { request_id: 'fresh', text: 'fresh request' });
+        await until(() => store.run(fresh.id).status === 'completed');
+        assert.equal(calls, 2);
+      } else
+        assert.throws(
+          () => hub.startRun('board', { request_id: 'fresh', text: 'fresh request' }),
+          /requires_reconciliation/,
+        );
+    } finally {
+      await hub.close();
+      store.close();
+    }
+  }
+});

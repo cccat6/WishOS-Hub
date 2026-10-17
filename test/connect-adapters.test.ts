@@ -252,3 +252,73 @@ test('route and boot wrappers preserve host scheduling metadata without changing
   ]);
   routes.close();
 });
+
+test('native runner terminal statuses settle failures, while missing completion or transport loss stays uncertain', async () => {
+  const { HarnessTurnEnded } = await import('../src/adapters/errors.js');
+  for (const kind of ['hermes', 'openclaw'] as const)
+    for (const status of ['failed', 'cancelled', 'unknown']) {
+      const adapter = new RunnerHttpAdapter(
+        kind,
+        { endpoint: 'http://fixture.invalid', timeoutMs: 1000 },
+        async (input) =>
+          Response.json(
+            String(input).endsWith('/v1/runs')
+              ? { run_id: 'r' }
+              : { status, session_id: 's', output: [] },
+          ),
+      );
+      try {
+        await assert.rejects(
+          adapter.send('s', 'request', () => {}),
+          (e: any) =>
+            status === 'unknown'
+              ? !(e instanceof HarnessTurnEnded)
+              : e instanceof HarnessTurnEnded &&
+                e.outcome === (status === 'failed' ? 'failed' : 'interrupted'),
+        );
+      } finally {
+        await adapter.close();
+      }
+    }
+  const rpc = new RpcFixture();
+  rpc.request = async (method: string) =>
+    method === 'session/prompt' ? { stopReason: 'cancelled' } : {};
+  const acp = new AcpAdapter('fixture', rpc, { cwd: '/workspace', timeoutMs: 1000 });
+  try {
+    await assert.rejects(
+      acp.send('s', 'request', () => {}),
+      (e: any) => e instanceof HarnessTurnEnded && e.outcome === 'interrupted',
+    );
+  } finally {
+    await acp.close();
+  }
+});
+
+test('CLI terminal failure requires its structured native result, not merely a process exit or cancellation request', async () => {
+  const { ClaudeCodeAdapter } = await import('../src/adapters/claude-code.js');
+  const { HarnessTurnEnded } = await import('../src/adapters/errors.js');
+  const { fileURLToPath } = await import('node:url');
+  const file = fileURLToPath(new URL('./fixtures/claude-result.mjs', import.meta.url));
+  for (const mode of ['terminal', 'missing']) {
+    const adapter = new ClaudeCodeAdapter({
+      command: process.execPath,
+      args: [file, mode],
+      cwd: process.cwd(),
+      timeoutMs: 3000,
+    });
+    try {
+      const session = await adapter.open();
+      await assert.rejects(
+        adapter.send(session, 'fail', () => {}),
+        (e: any) =>
+          mode === 'terminal'
+            ? e instanceof HarnessTurnEnded && e.outcome === 'failed'
+            : !(e instanceof HarnessTurnEnded),
+      );
+      if (mode === 'terminal')
+        assert.equal(await adapter.send(session, 'fresh', () => {}), 'fresh-result');
+    } finally {
+      await adapter.close();
+    }
+  }
+});

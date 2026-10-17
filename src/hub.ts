@@ -32,6 +32,7 @@ import { ZodError } from 'zod';
 import { SessionInput, HttpError } from './protocol.js';
 import { Store } from './store.js';
 import type { HarnessAdapter, AgentEvent } from './adapters/types.js';
+import { HarnessTurnEnded } from './adapters/errors.js';
 import type { Asr } from './voice.js';
 export interface DeviceConfig {
   id: string;
@@ -768,7 +769,7 @@ export class Hub {
         this.options.store.finishRun(run.id, 'completed', result);
       } catch (e) {
         rejectSession(e);
-        const status = submitted ? 'uncertain' : 'failed';
+        const status = submitted && !(e instanceof HarnessTurnEnded) ? 'uncertain' : 'failed';
         this.options.store.finishRun(run.id, status, String(e instanceof Error ? e.message : e));
       } finally {
         if (this.busy.get(id) === run.id) this.busy.delete(id);

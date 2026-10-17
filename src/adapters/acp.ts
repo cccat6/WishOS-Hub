@@ -1,6 +1,7 @@
 import type { HarnessAdapter, AgentEvent } from './types.js';
 import type { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
+import { HarnessTurnEnded } from './errors.js';
 export interface AgentRpc extends EventEmitter {
   request(method: string, params: unknown, timeoutMs?: number): Promise<any>;
   write(message: any): void;
@@ -100,6 +101,8 @@ export class AcpAdapter implements HarnessAdapter {
         { sessionId: session, prompt: [{ type: 'text', text }] },
         this.options.timeoutMs,
       );
+      if (result.stopReason === 'cancelled')
+        throw new HarnessTurnEnded('harness_turn_cancelled', 'interrupted');
       if (result.stopReason !== 'end_turn')
         throw Error('harness_turn_' + String(result.stopReason ?? 'incomplete'));
       return run.text;
