@@ -50,7 +50,12 @@ original validator version rather than becoming current validation evidence.
 Host fixtures cover the observed U+2212 math-minus failure, ASCII repair, per-target
 batch limits, inherited/custom/builtin/default font selection, private aliases,
 replacement policy, undeclared capability and failed/invalid replies. The Native
-source contract was inspected, not compiled into Hub. Native builds and live probe
-validation remain owned by the terminal task; current devices without the declared
-method are not advertised as supporting it. The original real generated app's
-install/launch success and font_missing_glyph presentation failure are retained.
+source contract was inspected, not compiled into Hub. Native builds remain owned
+by the terminal task. With its updated LCKFB firmware, the live MCP bridge discovered
+max_codepoints256, confirmed U+2212 missing and ASCII minus covered, rejected the
+original static text and accepted its ASCII repair before any device writes.
+Three actual font_check wire calls were observed on boot e4c7d87b8facadf6.
+This is read-only preflight acceptance, not app installation or displayed output.
+Devices without the declared method are not advertised as supporting it. The
+original real generated app's install/launch success and font_missing_glyph
+presentation failure are retained.

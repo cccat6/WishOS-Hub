@@ -570,6 +570,118 @@ test('cloud MCP executes the portable Lua WASM parser and rejects bad code befor
   }
 });
 
+test('cloud UI preflight uses current declared font coverage over relay without writing device media', async () => {
+  const a = await installation(),
+    client = await connectMcp(await access(a.owner_token)),
+    device = new WireDevice();
+  const fonts = [{ id: 'system', scalable: true, minimum_size: 8, maximum_size: 96 }];
+  device.descriptions['/sys/ui'] = {
+    methods: 'read,capabilities,fonts,font_check,open',
+    read_methods: 'read,capabilities,fonts,font_check',
+    format: 'brookesia-json-ui-0.1.x-subset',
+    nodes: 'viewScreen,label',
+    styles: 'font,fontSize',
+    fonts,
+    max_nodes: 32,
+    max_depth: 8,
+    max_document_bytes: 16384,
+    font_check: { method: 'font_check', max_codepoints: 2 },
+  };
+  let failure = false,
+    absentAscii = false;
+  device.resourceHandler = (c) => {
+    assert.equal(c.path, '/sys/ui');
+    if (c.method === 'capabilities') return device.descriptions['/sys/ui'];
+    if (c.method === 'fonts') return { fonts };
+    assert.equal(c.method, 'font_check');
+    assert.equal(c.args.font, 'system');
+    assert.equal(c.args.size, 19);
+    assert(c.args.codepoints.length <= 2);
+    if (failure) throw Error('font_file_unavailable');
+    const missing = c.args.codepoints.filter(
+      (cp: number) => cp === 0x2212 || (absentAscii && cp === 0x2d),
+    );
+    return { covered: missing.length === 0, missing_codepoints: missing };
+  };
+  const call = async (name: string, args: any) => {
+    const r: any = await client.callTool({ name, arguments: args });
+    assert(!r.isError, JSON.stringify(r));
+    return JSON.parse(r.content[0].text);
+  };
+  const finish = async (id: string) =>
+    eventually(async () => {
+      const job = await call('read_resource_job', { id });
+      return job.state !== 'running' ? job : false;
+    });
+  const check = async (artifact: string) =>
+    finish(
+      (
+        await call('preflight_bundle', {
+          device_id: 'device',
+          expected_boot_id: device.boot,
+          files: [{ path: 'ui.json', artifact_id: artifact }],
+        })
+      ).id,
+    );
+  try {
+    const profile = await request('/v1/devices', { id: 'device', label: 'Device' }, a.owner_token);
+    await device.connect(base.replace('http:', 'ws:') + '/os/device?id=device', profile.body.token);
+    let repaired = '';
+    for (const [text, valid] of [
+      ['−5分钟', false],
+      ['-5分钟', true],
+    ] as const) {
+      const ui = {
+        version: '0.1.1',
+        assets: [
+          {
+            type: 'viewScreen',
+            style: { fontSize: 19 },
+            children: [{ type: 'label', labelProps: { text } }],
+          },
+        ],
+      };
+      const staged = await finish((await call('stage_resource', { text: JSON.stringify(ui) })).id);
+      assert.equal(staged.state, 'completed');
+      const job = await check(staged.result.id);
+      assert.equal(job.state, valid ? 'completed' : 'failed', JSON.stringify(job));
+      if (valid) {
+        repaired = staged.result.id;
+        assert.equal(job.result.validator_version, '3');
+        assert.deepEqual(job.result.warnings, []);
+      } else {
+        assert.equal(job.diagnostics[0].code, 'ui_font_missing_glyph');
+        assert(job.diagnostics[0].detail.includes('U+2212'));
+      }
+    }
+    // Reuse the artifact, not stale font facts from the earlier successful check.
+    absentAscii = true;
+    const changed = await check(repaired);
+    assert.equal(changed.state, 'failed');
+    assert(changed.diagnostics[0].detail.includes('U+002D'));
+    failure = true;
+    const unavailable = await check(repaired);
+    assert.equal(unavailable.state, 'failed');
+    assert.equal(unavailable.diagnostics[0].code, 'target_capability');
+    assert(unavailable.diagnostics[0].detail.includes('font_file_unavailable'));
+    assert(device.calls.filter((c) => c.method === 'font_check').length >= 6);
+    assert(
+      device.calls.every(
+        (c) =>
+          (c.path === '/sys/capabilities' && c.method === 'describe') ||
+          (c.path === '/sys/ui' && ['capabilities', 'fonts', 'font_check'].includes(c.method)),
+      ),
+    );
+  } finally {
+    await client.close();
+    await device.close();
+    await fetch(base + '/v1/installations', {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer ' + a.owner_token },
+    });
+  }
+});
+
 test('cloud MCP package tools deliver, await native admission and update whole files over relay', async () => {
   const { PackageDevice } = await import('./fixtures/package-device.js');
   const a = await installation(),
