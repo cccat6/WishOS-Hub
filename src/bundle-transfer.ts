@@ -57,92 +57,193 @@ export async function deliverBundle(
         ),
       ).toString('hex');
     const prepare = async (p: any) => {
+      signal.throwIfAborted();
       const description = await rpc('/sys/capabilities', 'describe', { path: p.path });
-      if (!description.ok) throw Error(description.error);
+      if (!description.ok) throw new ResourceReplyError(description);
+      signal.throwIfAborted();
       const async = description.result?.async?.[p.method];
-      let result = await rpc(
-        async ? '/sys/operations' : p.path,
-        async ? 'request' : p.method,
-        async ? { path: p.path, method: p.method, args: p.args ?? {} } : (p.args ?? {}),
-      );
-      if (result.ok && result.result.completion_id) {
-        const id = result.result.completion_id;
-        try {
-          for (;;) {
-            signal.throwIfAborted();
-            const r = await rpc('/sys/operations', 'read', { id });
-            if (!r.ok) throw Error(r.error);
-            if (r.result.ready) {
-              result = { ...r, ok: async.success_events.includes(r.result.event) };
-              break;
+      let completionId: unknown;
+      try {
+        let result = await rpc(
+          async ? '/sys/operations' : p.path,
+          async ? 'request' : p.method,
+          async ? { path: p.path, method: p.method, args: p.args ?? {} } : (p.args ?? {}),
+        );
+        if (result.ok && result.result.completion_id) {
+          const id = result.result.completion_id;
+          completionId = id;
+          try {
+            for (;;) {
+              signal.throwIfAborted();
+              const r = await rpc('/sys/operations', 'read', { id });
+              if (!r.ok) throw new ResourceReplyError(r);
+              if (r.result.ready) {
+                const ok = async?.success_events?.includes(r.result.event) === true;
+                result = {
+                  ...r,
+                  ok,
+                  ...(!ok ? { error: r.result.data?.error ?? 'storage_preparation_failed' } : {}),
+                };
+                break;
+              }
+              await new Promise((r) => setTimeout(r, 25));
             }
-            await new Promise((r) => setTimeout(r, 25));
+          } finally {
+            const released = await rpc('/sys/operations', 'release', { id });
+            if (!released.ok) throw new ResourceReplyError(released);
           }
-        } finally {
-          await rpc('/sys/operations', 'release', { id });
         }
+        return result;
+      } catch (error) {
+        throw Object.assign(error instanceof Error ? error : Error(String(error)), {
+          transfer_receipt: {
+            request_id: key,
+            state: 'not_dispatched',
+            expected_boot_id: boot,
+            preparation: {
+              path: p.path,
+              method: p.method,
+              completion_id: completionId,
+              state:
+                error instanceof ResourceReplyError
+                  ? 'failed'
+                  : error instanceof TransportFailure && !error.dispatched
+                    ? 'not_dispatched'
+                    : 'outcome_unknown',
+            },
+          },
+        });
       }
-      return result;
     };
-    // Explicit delivery can prepare/refresh storage; discovery remains read-only.
-    const policy = await call('read', {});
-    let volumes = await readMounts(rpc, signal);
-    for (const target of policy.policy?.targets ?? []) {
-      let volume = volumes.find((p: any) => p.id === target.provider);
-      if (!volume) continue;
-      if (!volume.available) {
-        if (!volume.prepare) continue;
-        const result = await prepare(volume.prepare);
-        if (!result.ok) {
-          const error = result.error ?? result.result?.data?.error ?? 'storage_preparation_failed';
-          if (/memory|budget|busy|active|timeout|cancel/.test(error))
-            throw new ResourceReplyError({ ...result, error });
-          const state = await rpc(volume.prepare.path, 'read', {});
-          if (state.ok && state.result.link_ready)
-            throw new ResourceReplyError({ ...result, error: 'storage_volume_unavailable' });
+    // Follow policy order; preparation and capacity scanning occur only for an
+    // explicit delivery, never discovery. Re-read the selection after each change.
+    const storageSnapshot = async () => ({
+      policy: (await call('read', {})).policy ?? {},
+      volumes: await readMounts(rpc, signal),
+    });
+    const capacityStale = (volume: any) =>
+      volume.free_needs_refresh === true ||
+      (Object.hasOwn(volume, 'volume_capacity_bytes') &&
+        (volume.volume_capacity_bytes == null || volume.free_bytes == null));
+    const prepareStorage = async (forceRefresh = false) => {
+      let snapshot = await storageSnapshot();
+      const mounted = new Set<string>(),
+        refreshed = new Set<string>();
+      for (;;) {
+        signal.throwIfAborted();
+        let selected: any, pending: any;
+        for (const target of snapshot.policy.targets ?? []) {
+          const volume = snapshot.volumes.find((p: any) => p.id === target.provider);
+          if (!volume) continue;
+          if (volume.available) {
+            selected = volume;
+            break;
+          }
+          if (volume.prepare && !mounted.has(volume.id)) {
+            pending = volume;
+            break;
+          }
+        }
+        if (pending) {
+          mounted.add(pending.id);
+          const result = await prepare(pending.prepare);
+          if (!result.ok) {
+            const error =
+              result.error ?? result.result?.data?.error ?? 'storage_preparation_failed';
+            if (/memory|budget|busy|active|timeout|cancel/.test(error))
+              throw new ResourceReplyError({ ...result, error });
+            const state = await rpc(pending.prepare.path, 'read', {});
+            if (!state.ok) throw new ResourceReplyError(state);
+            if (state.result.link_ready !== false)
+              throw new ResourceReplyError({
+                ...result,
+                error: state.result.link_ready === true ? 'storage_volume_unavailable' : error,
+              });
+          }
+          snapshot = await storageSnapshot();
           continue;
         }
-        volumes = await readMounts(rpc, signal);
-        volume = volumes.find((p: any) => p.id === target.provider);
+        if (selected && (forceRefresh || capacityStale(selected))) {
+          if (!selected.capacity_refresh || refreshed.has(selected.id))
+            throw new ResourceReplyError({
+              boot_id: boot!,
+              ok: false,
+              error: 'storage_space_refresh_required',
+              result: {},
+            });
+          refreshed.add(selected.id);
+          const result = await prepare(selected.capacity_refresh);
+          if (!result.ok)
+            throw new ResourceReplyError({
+              ...result,
+              error: result.error ?? result.result?.data?.error ?? 'storage_capacity_unavailable',
+            });
+          forceRefresh = false;
+          snapshot = await storageSnapshot();
+          continue;
+        }
+        return snapshot;
       }
-      if (volume.capacity_refresh && (volume.free_needs_refresh || volume.free_bytes == null)) {
-        const r = await prepare(volume.capacity_refresh);
-        if (!r.ok)
-          throw new ResourceReplyError({
-            ...r,
-            error: r.error ?? 'storage_capacity_unavailable',
-          });
-      }
-      break;
-    }
-    if (preflight.packages.length) {
+    };
+    const checkPackageStorage = async () => {
+      if (!preflight.packages.length) return;
       const apps = await rpc('/sys/capabilities', 'describe', { path: '/sys/apps' });
       if (!apps.ok) throw new ResourceReplyError(apps);
       if (apps.result.install_providers !== undefined) {
-        const currentPolicy = await call('read', {}),
-          currentVolumes = await readMounts(rpc, signal);
-        checkApplicationStorage(apps.result, currentPolicy.policy ?? {}, currentVolumes, false);
+        const snapshot = await storageSnapshot();
+        checkApplicationStorage(apps.result, snapshot.policy, snapshot.volumes, false);
       }
-    }
-    const start = await call('begin', {
+    };
+    await prepareStorage();
+    await checkPackageStorage();
+    const beginArgs = {
       request_id: key,
       ...(remoteRequestId ? { remote_request_id: remoteRequestId } : {}),
       bytes: String(total),
       files: files.length,
-    }).catch((error) => {
+    };
+    let beginState = 'not_dispatched';
+    const begin = async () => {
+      try {
+        return await call('begin', beginArgs);
+      } catch (error) {
+        beginState =
+          error instanceof ResourceReplyError
+            ? 'rejected'
+            : error instanceof TransportFailure && !error.dispatched
+              ? 'not_dispatched'
+              : 'begin_outcome_unknown';
+        throw error;
+      }
+    };
+    let start;
+    try {
+      try {
+        start = await begin();
+      } catch (error) {
+        // These native begin refusals precede transaction/media changes. Never
+        // infer this permission from a transport exception or a similar message.
+        if (
+          !(error instanceof ResourceReplyError) ||
+          !['storage_space_refresh_required', 'storage_preparation_required'].includes(
+            error.reply.error ?? '',
+          )
+        )
+          throw error;
+        await prepareStorage(error.reply.error === 'storage_space_refresh_required');
+        await checkPackageStorage();
+        start = await begin();
+      }
+    } catch (error) {
       throw Object.assign(error instanceof Error ? error : Error(String(error)), {
         transfer_receipt: {
+          ...((error as any)?.transfer_receipt ?? {}),
           request_id: key,
-          state:
-            error instanceof ResourceReplyError
-              ? 'rejected'
-              : error instanceof TransportFailure && !error.dispatched
-                ? 'not_dispatched'
-                : 'begin_outcome_unknown',
+          state: beginState,
           expected_boot_id: boot,
         },
       });
-    });
+    }
     let committed = start.state === 'committed';
     if (committed) return { transfer_id: start.id, root: start.root, preflight };
     try {

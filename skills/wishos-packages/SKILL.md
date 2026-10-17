@@ -23,6 +23,11 @@ UI 预检按所选 renderer 的词汇和限制；on_start 可注册字体，结�
 
 先读 `/sys/apps describe.install_providers` 确认应用安装卷，再读 `/sys/transfers` 有序目标、
 `/fs mounts` 和配额；mounts 按 next_cursor 连续读取到 more:false，不能只看第一页。
+显式交付按有序目标中实际可用的提供者处理容量；free_needs_refresh 不代表应改用下一个卷。
+通过该提供者声明的 capacity_refresh 执行容量刷新，异步方法等真实完成并释放 operation，
+之后重读策略和卷元数据；不要固定刷新 /dev/flash 来代替当前 SD／其它卷。
+Hub 交付工具负责这一准备流程。begin 明确返回前效容量／准备拒绝时仅作有界恢复，
+不把空间不足、未知响应或变更超时当作换卷／盲重试许可；检查原请求及阶段回执。
 用户应用/替代 Launcher 优先按设备包的 SD 策略放置；只有设备明确
 允许且配置了内部 Flash 目标和配额才能回退，不按 MCU 型号或容量猜测。
 install_providers 是系统可配置策略：新设备返回 provider ID 数组，空数组禁止用户安装；旧固件 CSV 仍可读取。

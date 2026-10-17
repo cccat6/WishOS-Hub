@@ -125,3 +125,26 @@ prohibits user installation. Hub checks arrays and legacy CSV both before side
 effects and after preparation; array metadata never bypasses the gate. Device
 packages choose defaults (4MB defaults to SD); an explicit system action can permit
 Flash. Transfer targets and quotas remain independently configured.
+
+## Selected-provider capacity preparation
+
+For explicit asset/package delivery, Hub reads `/sys/transfers read.policy.targets`
+and the complete `/fs mounts` catalog. It uses the current provider order and
+available/preparation declarations; it does not select a device path from an MCU
+name or assume Flash. Available volumes are not remounted. A selected volume with
+`free_needs_refresh:true` or unknown declared physical capacity uses its own
+`capacity_refresh:{path,method,args}`. The driver descriptor determines tracked
+operation dispatch and success events; operation handles are released and checked.
+Policy and volume metadata are reread after preparation/refresh, and application
+placement is checked again before package begin. A quota/capacity failure on the
+first available provider does not authorize fallback to another available volume.
+
+An explicit native begin refusal `storage_space_refresh_required` or
+`storage_preparation_required` is before transaction effects in the current
+contract. Hub can reread/select/prepare and retry that same begin identity once.
+This does not permit retry after a lost/unknown mutation response, a failed refresh,
+a quota refusal or a stale second result. The managed delivery route does not turn
+an exhausted capacity refusal into an unbounded outer remote-request retry.
+Transfer-stage receipts are retained by both ordinary resource jobs and typed
+package jobs. Discovery/preflight remains read-only and native begin/install remains
+the authority at the actual side-effect boundary.

@@ -83,6 +83,8 @@ export class ResourceJobs {
           job.error = error instanceof Error ? error.message : 'resource_job_failed';
           if (error?.diagnostics) job.diagnostics = error.diagnostics;
           if (error?.receipts) job.receipts = error.receipts;
+          if (error?.transfer_receipt)
+            job.receipts = { ...job.receipts, transfer: error.transfer_receipt };
           if (error instanceof Error && error.name === 'PackageOutcomeUnknown')
             job.state = 'unknown';
         },

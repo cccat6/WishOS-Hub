@@ -256,9 +256,9 @@ export function managedAgentRoute(options: {
             } catch (error) {
               if (
                 error instanceof Error &&
-                /disconnected|transport|outcome_unknown|transfer_active|storage_space_refresh_required/.test(
-                  error.message,
-                )
+                !(error as any).transfer_receipt?.preparation &&
+                (error as any).transfer_receipt?.state !== 'begin_outcome_unknown' &&
+                /disconnected|transport|outcome_unknown|transfer_active/.test(error.message)
               )
                 throw new RetryableRemoteError(error.message);
               throw error;
