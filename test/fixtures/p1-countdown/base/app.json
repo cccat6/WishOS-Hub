@@ -1,0 +1,59 @@
+{
+  "format": "wishos-app/1",
+  "id": "countdown-source-template",
+  "title": "Countdown source template",
+  "version": "1.0",
+  "entry": "main.lua",
+  "memory_bytes": 131072,
+  "instruction_budget": 100000,
+  "system_call_budget": 64,
+  "requires": [
+    {
+      "path": "/sys/capabilities",
+      "methods": [
+        "describe"
+      ]
+    },
+    {
+      "path": "/sys/ui",
+      "methods": [
+        "open",
+        "update",
+        "hit_test"
+      ]
+    },
+    {
+      "path": "/sys/clock",
+      "methods": [
+        "read"
+      ]
+    },
+    {
+      "path": "/sys/timers",
+      "methods": [
+        "write",
+        "remove"
+      ]
+    },
+    {
+      "path": "/sys/apps",
+      "methods": [
+        "home",
+        "voice"
+      ]
+    },
+    {
+      "path": "/dev/touch",
+      "methods": [
+        "read"
+      ]
+    }
+  ],
+  "help": {
+    "start": "5分钟暂停；触摸开始/暂停、重置、-5分、+5分。",
+    "navigation": "独立桌面/语音按钮调用系统入口；不绑定或消费实体按键；帮助按运行时导航合同显示。",
+    "lifecycle": "重开/重置05:00暂停。到零停止，再开始重计5分钟。本地单调时钟，不逐tick调用模型。",
+    "failure": "渲染失败停止自动提交，帮助键显式重试；首帧失败可用系统入口退出再重开。",
+    "validation": "320x240仅设计输入；离线包未验证目标字形、资源、物理显示。Root须最终boot重新预检。"
+  }
+}
