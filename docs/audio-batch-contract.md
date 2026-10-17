@@ -7,10 +7,10 @@ retention policy, cache capacity, loss threshold or OS control-frame size.
 The driver advertises:
 
 ```json
-{"batch_read":{"method":"read_batch","maximum_chunks":40,"acknowledgement_cursor":"after_sequence","format":"wishos-audio-batch/1"}}
+{"batch_read":{"method":"read_batch","maximum_chunks":30,"acknowledgement_cursor":"after_sequence","format":"wishos-audio-batch/1"}}
 ```
 
-40 is an example declaration, not a universal block count. Hub requests the driver's
+30 is an example declaration, not a universal block count. Hub requests the driver's
 maximum (or its lower explicit batch policy); the driver may return fewer complete
 records to fit its control envelope. A response retains normal session metadata,
 including sample_rate, recording, buffered_chunks, produced_samples, capture_failed,

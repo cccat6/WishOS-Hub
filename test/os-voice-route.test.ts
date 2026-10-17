@@ -81,7 +81,7 @@ function fixture(
           ? {
               batch_read: {
                 method: 'read_batch',
-                maximum_chunks: 40,
+                maximum_chunks: 30,
                 acknowledgement_cursor: 'after_sequence',
                 format: 'wishos-audio-batch/1',
               },
@@ -170,6 +170,7 @@ function fixture(
   return {
     run,
     discover: () => route.discover('b', controller.signal),
+    batchMaximum: options.batch ? 30 : 0,
     calls,
     received,
     events,
@@ -321,7 +322,10 @@ test('advertised compact batches preserve durable ACKs and improve delivery with
     assert.equal(result.run_id, 'native-run');
     assert.equal(f.calls.filter((c) => c.method === 'describe').length, 1);
     assert.equal(f.calls.filter((c) => c.method === 'read_chunk').length, 0);
-    assert(f.calls.some((c) => c.method === 'read_batch' && c.args.limit === 40));
+    const descriptor = f.calls.find((c) => c.method === 'describe');
+    const maximum = descriptor?.args?.path === '/dev/mic' ? f.batchMaximum : 0;
+    assert(maximum > 0);
+    assert(f.calls.some((c) => c.method === 'read_batch' && c.args.limit === maximum));
     assert.equal(f.received.size, 200);
     assert.equal(f.dropped, 0);
     assert.equal(f.events.at(-1)?.read_method, 'read_batch');
@@ -413,7 +417,7 @@ test('a new boot invalidates batch negotiation and a late old-boot reply cannot 
     result: {
       batch_read: {
         method: 'read_batch',
-        maximum_chunks: 40,
+        maximum_chunks: 30,
         format: 'wishos-audio-batch/1',
         acknowledgement_cursor: 'after_sequence',
       },
@@ -444,7 +448,7 @@ test('unrecognized batch declarations and transient capability failures do not a
               result: {
                 batch_read: {
                   method: 'read_batch',
-                  maximum_chunks: 40,
+                  maximum_chunks: 30,
                   format: 'future-audio-batch/2',
                   acknowledgement_cursor: 'after_sequence',
                 },
