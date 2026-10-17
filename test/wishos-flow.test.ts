@@ -236,3 +236,192 @@ test('WebSocket RPC uses the same RPC envelope through fragmented WebSocket fram
     store.close();
   }
 });
+
+test('compact managed voice crosses fragmented WS, durable ingress, ASR and the fixed Harness before typed result handoff', async () => {
+  const { WireDevice, eventually } = await import('./fixtures/wire-device.js');
+  const { packBatch } = await import('./fixtures/audio-batch.js');
+  const { readFile } = await import('node:fs/promises');
+  const native = await readFile(new URL('./fixtures/os-voice-ima.bin', import.meta.url));
+  const chunks = Array.from({ length: 64 }, (_, i) => ({
+    sequence: i,
+    samples: 160,
+    sample_start: String(i * 160),
+    adpcm_b64: native.subarray(i * 91, (i + 1) * 91).toString('base64'),
+  }));
+  const store = new Store(':memory:');
+  let nativeAck = 0,
+    asrs = 0,
+    sends = 0,
+    ready = false,
+    completion: any;
+  const adapter: any = {
+    name: 'fixture',
+    capabilities: { interrupt: false, approval: false },
+    async open(id: string) {
+      assert.equal(id, 'fixed-session');
+      return id;
+    },
+    async send(session: string, text: string) {
+      sends++;
+      assert.equal(asrs, 1);
+      assert.equal(session, 'fixed-session');
+      assert(text.includes('"application_id":"voice"'));
+      assert(text.includes('"application_id":"clock"'));
+      assert(text.endsWith('请回答测试成功'));
+      return JSON.stringify({
+        format: 'wishos-result/2',
+        actions: [
+          {
+            type: 'application',
+            recipient: 'origin',
+            topic: 'voice-result',
+            wait: 'processed',
+            data: { text: '测试成功' },
+          },
+        ],
+      });
+    },
+    async close() {},
+  };
+  const hub = new Hub({
+    store,
+    adminToken: '',
+    devices: [{ id: 'compact', token: 'fixture-pair', sessionId: 'fixed-session', adapter }],
+    asr: {
+      async transcribe(wav) {
+        asrs++;
+        assert.equal(nativeAck, chunks.length);
+        assert.equal(wav.readUInt32LE(24), 16000);
+        assert.equal(wav.readUInt32LE(40), chunks.length * 160 * 2);
+        return '请回答测试成功';
+      },
+    },
+  });
+  const address = (await hub.listen(0, '127.0.0.1')) as any;
+  const device = new WireDevice();
+  device.boot = 'compact-boot';
+  device.descriptions['/dev/mic'] = {
+    batch_read: {
+      method: 'read_batch',
+      maximum_chunks: 30,
+      format: 'wishos-audio-batch/1',
+      acknowledgement_cursor: 'after_sequence',
+    },
+  };
+  const request = {
+    id: 1,
+    request_id: 'compact-boot:1',
+    route: 'wishos.ai',
+    state: 'queued',
+    payload: {
+      format: 'wishos-ai/2',
+      input: { kind: 'voice', recording_id: 'recording', session_id: 'fixed-session' },
+      context: {
+        current: { application_id: 'voice', instance_id: 2, catalog_revision: 1 },
+        launch_origin: { application_id: 'clock', instance_id: 1, catalog_revision: 1 },
+      },
+    },
+  };
+  const answer = (call: any, result: any) => {
+    for (const f of frame({ id: call.id, boot_id: device.boot, ok: true, result }, call.id + 10000))
+      device.socket.send(f);
+  };
+  device.beforeRespond = (call) => {
+    if (call.path !== '/services/remote') return;
+    if (call.method === 'read')
+      answer(call, {
+        pending: ready && !completion,
+        requests: ready && !completion ? [{ id: 1, state: 'queued' }] : [],
+      });
+    else if (call.method === 'peek')
+      answer(call, ready && !completion && call.args.after_id < 1 ? request : { state: 'empty' });
+    else if (call.method === 'complete') {
+      completion = call.args;
+      answer(call, {});
+    } else throw Error('unexpected remote method');
+    return false;
+  };
+  device.resourceHandler = (call) => {
+    assert.equal(call.path, '/dev/mic');
+    if (call.args.after_sequence !== undefined || call.method === 'ack') {
+      const cursor = call.args.after_sequence ?? call.args.next_sequence;
+      const durable = store.db
+        .prepare('SELECT next_sequence FROM os_audio_streams WHERE device=? AND id=?')
+        .get('compact', 'recording') as any;
+      assert(durable && cursor <= durable.next_sequence, 'device ACK preceded Host durability');
+      nativeAck = cursor;
+    }
+    if (call.method === 'release') return {};
+    const common = {
+      recording_id: 'recording',
+      sample_rate: 16000,
+      recording: false,
+      produced_samples: String(chunks.length * 160),
+      capture_failed: false,
+      storage_pending: false,
+      storage_requested: 'off',
+      encoding: 'ima-adpcm',
+      buffered_chunks: chunks.length - nativeAck,
+      acknowledged_sequence: nativeAck,
+      offered_sequence: chunks.length,
+    };
+    if (call.method === 'ack') return common;
+    assert.equal(call.method, 'read_batch');
+    assert.equal(call.args.limit, device.descriptions['/dev/mic'].batch_read.maximum_chunks);
+    const batch = chunks.slice(nativeAck, nativeAck + Math.min(call.args.limit, 24));
+    return { ...common, batch_encoding: 'wishos-audio-batch/1', batch_b64: packBatch(batch) };
+  };
+  try {
+    await device.connect(`ws://127.0.0.1:${address.port}/os/device?id=compact`, 'fixture-pair');
+    await eventually(
+      async () =>
+        device.calls.some((c) => c.path === '/sys/capabilities' && c.args.path === '/dev/mic') &&
+        device.calls.some((c) => c.path === '/services/remote'),
+    );
+    ready = true;
+    await eventually(async () => completion, 10000);
+    await eventually(
+      async () =>
+        (
+          store.db
+            .prepare('SELECT state FROM os_remote_journal WHERE device=? AND key=?')
+            .get('compact', 'compact-boot:1') as any
+        )?.state === 'acknowledged',
+    );
+    assert.equal(completion.ok, true, JSON.stringify(completion));
+    assert.equal(completion.result.format, 'wishos-result/2');
+    assert.deepEqual(completion.result.actions, [
+      {
+        type: 'application',
+        recipient: 'origin',
+        topic: 'voice-result',
+        wait: 'processed',
+        data: { text: '测试成功' },
+      },
+    ]);
+    assert.equal(asrs, 1);
+    assert.equal(sends, 1);
+    assert.equal(nativeAck, chunks.length);
+    assert.equal(hub.state('compact').audio_delivery?.read_method, 'read_batch');
+    assert.equal(hub.state('compact').audio_delivery?.phase, 'accepted');
+    assert.equal(
+      device.calls.filter((c) => c.path === '/dev/mic' && c.method === 'read_batch').length,
+      3,
+    );
+    assert.equal(
+      device.calls.filter((c) => c.path === '/sys/capabilities' && c.args.path === '/dev/mic')
+        .length,
+      1,
+    );
+    assert(!device.calls.some((c) => c.path === '/dev/mic' && c.method === 'read_chunk'));
+    assert(
+      !device.calls.some(
+        (c) => c.path === '/fs' && ['write', 'append', 'begin'].includes(c.method),
+      ),
+    );
+  } finally {
+    await device.close();
+    await hub.close();
+    store.close();
+  }
+});
