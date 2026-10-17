@@ -227,3 +227,82 @@ test('HTTP MCP resolves a voice-selected reference and returns an ordered applic
     store.close();
   }
 });
+
+test('cached managed delivery rechecks application references for both inline and staged plans before replay', async () => {
+  for (const staged of [false, true]) {
+    const root = await mkdtemp(join(tmpdir(), 'wishos-managed-cache-'));
+    const db = new DatabaseSync(':memory:'),
+      artifacts = new ArtifactStore(db, root);
+    let valid = true,
+      checks = 0,
+      deliveries = 0,
+      bytes = 1536;
+    const action = {
+      type: 'application',
+      topic: 'session_control',
+      data: {
+        format: 'wishos-session-control/1',
+        operation: 'select',
+        ok: true,
+        selected_session: {
+          runtime_id: 'runner',
+          session_id: 'previous',
+          session_scope: 'original',
+        },
+      },
+    };
+    const result: any = { format: 'wishos-result/2', actions: [action] };
+    if (staged) {
+      const file = await artifacts.stage({ text: JSON.stringify(action) + '\n' });
+      delete result.actions;
+      result.sequence = { path: 'actions.jsonl', format: 'jsonl' };
+      result.files = [{ path: 'actions.jsonl', artifact_id: file.id }];
+      artifacts.preflight = async () => undefined as any;
+      artifacts.deliver = async () => {
+        deliveries++;
+        return { transfer_id: 1 } as any;
+      };
+    }
+    const route = managedAgentRoute({
+      artifacts,
+      rpc: async () => ({
+        ok: true,
+        boot_id: 'boot',
+        result: {
+          result_format: 'wishos-result/2',
+          inline_result_limit_bytes: bytes,
+          action_limit_bytes: 1536,
+        },
+      }),
+      start: () => ({ id: 'run' }),
+      status: () => ({ status: 'completed', result: JSON.stringify(result) }),
+      validateApplicationAction: async () => {
+        checks++;
+        if (!valid) throw Error('session_scope_changed');
+      },
+    });
+    try {
+      const input = request({ text: '切回之前的对话' });
+      const first = await route(input, new AbortController().signal);
+      assert.equal(checks, 1);
+      assert.deepEqual(await route(input, new AbortController().signal), first);
+      assert.equal(checks, 2);
+      valid = false;
+      await assert.rejects(
+        Promise.resolve(route(input, new AbortController().signal)),
+        /session_scope_changed/,
+      );
+      assert.equal(checks, 3);
+      valid = true;
+      bytes = 64;
+      await assert.rejects(
+        Promise.resolve(route(input, new AbortController().signal)),
+        /managed_result_metadata_limit/,
+      );
+      assert.equal(deliveries, staged ? 1 : 0);
+    } finally {
+      db.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});

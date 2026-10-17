@@ -21,6 +21,39 @@ export function managedText(requestId: string, text: string, context: unknown) {
     text
   );
 }
+async function visitActions(
+  result: ReturnType<typeof parseManagedResult>,
+  artifacts: ArtifactStore,
+  actionBytes: number,
+  signal: AbortSignal,
+  visit: (action: unknown) => Promise<void>,
+) {
+  if (result.actions) for (const action of result.actions) await visit(action);
+  if (!result.sequence) return;
+  const source = result.files!.find((f) => f.path === result.sequence!.path)!;
+  const file = artifacts.get(source.artifact_id);
+  let bytes = 0,
+    buffer = '';
+  for await (const chunk of createReadStream(file.path, { encoding: 'utf8' })) {
+    signal.throwIfAborted();
+    buffer += chunk;
+    bytes += Buffer.byteLength(chunk);
+    for (;;) {
+      const end = buffer.indexOf('\n');
+      if (end < 0) break;
+      const line = buffer.slice(0, end).trim();
+      buffer = buffer.slice(end + 1);
+      if (line) {
+        if (Buffer.byteLength(line) > actionBytes)
+          throw Error('managed_action_too_large_use_asset');
+        await visit(JSON.parse(line));
+      }
+    }
+    if (Buffer.byteLength(buffer) > actionBytes) throw Error('managed_action_too_large_use_asset');
+  }
+  if (buffer.trim()) await visit(JSON.parse(buffer));
+  if (bytes !== file.size) throw Error('artifact_changed');
+}
 export function managedAgentRoute(options: {
   rpc: DeviceRpc;
   artifacts: ArtifactStore;
@@ -133,129 +166,113 @@ export function managedAgentRoute(options: {
       r.boot_id ? { expected_boot_id: r.boot_id } : {},
     );
     if (!identity.ok) throw Error(identity.error);
-    return options.artifacts.managedResult(identity.boot_id + ':' + run.id, async () => {
-      const schema = await options.rpc('/sys/capabilities', 'describe', {
-        path: '/services/ai',
-        expected_boot_id: identity.boot_id,
-      });
-      if (!schema.ok || schema.result.result_format !== 'wishos-result/2')
-        throw Error('device_ai_protocol_mismatch');
-      const actionBytes = Number(schema.result.action_limit_bytes),
-        inlineBytes = Number(schema.result.inline_result_limit_bytes);
-      if (
-        !Number.isSafeInteger(actionBytes) ||
-        actionBytes <= 0 ||
-        !Number.isSafeInteger(inlineBytes) ||
-        inlineBytes <= 0
-      )
-        throw Error('device_ai_limits');
-      const result = parseManagedResult(done.result ?? '');
-      const release = options.artifacts.pin(
-        (result.files ?? []).map((f) => options.artifacts.get(f.artifact_id)),
-      );
-      try {
-        result.operation_id = run.id;
-        const rpc = bootRpc(options.rpc, identity.boot_id);
-        const report = result.files?.length
-          ? await options.artifacts.preflight(result.files, {
-              rpc,
-              expectedBoot: identity.boot_id,
-              controlFiles: result.sequence ? [result.sequence.path] : [],
-              signal,
-            })
-          : undefined;
-        const check = async (action: unknown) => {
-          validateAction(action);
-          if (action.type === 'application') await options.validateApplicationAction?.(action);
-          validateReferences(action, result.files?.map((f) => f.path) ?? []);
-          if (Buffer.byteLength(JSON.stringify(action)) > actionBytes)
-            throw Error('managed_action_too_large_use_asset');
-          await preflightAction(action, {
-            source: options.artifacts,
-            files: result.files ?? [],
-            report,
-            rpc,
-            compiler: nodeLuaCompiler,
-            signal,
-          });
-        };
-        if (result.actions) for (const action of result.actions) await check(action);
-        if (result.sequence) {
-          const source = result.files!.find((f) => f.path === result.sequence!.path)!;
-          const file = options.artifacts.get(source.artifact_id);
-          let bytes = 0,
-            buffer = '';
-          // Read bounded lines rather than load a whole plan into memory.
-          for await (const chunk of createReadStream(file.path, { encoding: 'utf8' })) {
-            signal.throwIfAborted();
-            buffer += chunk;
-            bytes += Buffer.byteLength(chunk);
-            for (;;) {
-              const end = buffer.indexOf('\n');
-              if (end < 0) break;
-              const line = buffer.slice(0, end).trim();
-              buffer = buffer.slice(end + 1);
-              if (line) {
-                if (Buffer.byteLength(line) > actionBytes)
-                  throw Error('managed_action_too_large_use_asset');
-                await check(JSON.parse(line));
-              }
-            }
-            if (Buffer.byteLength(buffer) > actionBytes)
-              throw Error('managed_action_too_large_use_asset');
-          }
-          if (buffer.trim()) await check(JSON.parse(buffer));
-          if (bytes !== file.size) throw Error('artifact_changed');
-        }
-        if (
-          result.actions &&
-          Buffer.byteLength(JSON.stringify({ ...result, files: undefined })) > inlineBytes
-        ) {
-          const actions = result.actions;
-          const staged = await options.artifacts.stageStream(
-            (async function* () {
-              for (const action of actions) yield Buffer.from(JSON.stringify(action) + '\n');
-            })(),
-            undefined,
-            signal,
-          );
-          const path = 'wishos-actions-' + randomUUID() + '.jsonl';
-          result.files = [...(result.files ?? []), { path, artifact_id: staged.id }];
-          delete result.actions;
-          result.sequence = { path, format: 'jsonl' };
-        }
-        const files = result.files;
-        delete result.files;
-        // Result metadata itself must fit before starting a device-side transaction.
-        if (Buffer.byteLength(JSON.stringify({ ...result, transfer_id: 4294967295 })) > inlineBytes)
-          throw Error('managed_result_metadata_limit');
-        if (files?.length) {
-          try {
-            const delivered = await options.artifacts.deliver(
-              options.rpc,
-              files,
-              signal,
-              r.boot_id,
-              r.id,
-              result.sequence ? [result.sequence.path] : [],
-            );
-            result.transfer_id = delivered.transfer_id;
-          } catch (error) {
-            if (
-              error instanceof Error &&
-              /disconnected|transport|outcome_unknown|transfer_active|storage_space_refresh_required/.test(
-                error.message,
-              )
-            )
-              throw new RetryableRemoteError(error.message);
-            throw error;
-          }
-        }
-        return result;
-      } finally {
-        release();
-      }
+    const schema = await options.rpc('/sys/capabilities', 'describe', {
+      path: '/services/ai',
+      expected_boot_id: identity.boot_id,
     });
+    if (!schema.ok || schema.result.result_format !== 'wishos-result/2')
+      throw Error('device_ai_protocol_mismatch');
+    const actionBytes = Number(schema.result.action_limit_bytes),
+      inlineBytes = Number(schema.result.inline_result_limit_bytes);
+    if (
+      !Number.isSafeInteger(actionBytes) ||
+      actionBytes <= 0 ||
+      !Number.isSafeInteger(inlineBytes) ||
+      inlineBytes <= 0
+    )
+      throw Error('device_ai_limits');
+    const result = parseManagedResult(done.result ?? '');
+    const release = options.artifacts.pin(
+      (result.files ?? []).map((f) => options.artifacts.get(f.artifact_id)),
+    );
+    try {
+      // Cached delivery receipts do not authorize references from an old runtime/profile.
+      // Check both inline and staged actions again before reusing a prepared result.
+      await visitActions(result, options.artifacts, actionBytes, signal, async (action) => {
+        validateAction(action);
+        validateReferences(action, result.files?.map((f) => f.path) ?? []);
+        if (Buffer.byteLength(JSON.stringify(action)) > actionBytes)
+          throw Error('managed_action_too_large_use_asset');
+        if (action.type === 'application') await options.validateApplicationAction?.(action);
+      });
+      const prepared = await options.artifacts.managedResult(
+        identity.boot_id + ':' + run.id,
+        async () => {
+          result.operation_id = run.id;
+          const rpc = bootRpc(options.rpc, identity.boot_id);
+          const report = result.files?.length
+            ? await options.artifacts.preflight(result.files, {
+                rpc,
+                expectedBoot: identity.boot_id,
+                controlFiles: result.sequence ? [result.sequence.path] : [],
+                signal,
+              })
+            : undefined;
+          await visitActions(result, options.artifacts, actionBytes, signal, (action) =>
+            preflightAction(action as Parameters<typeof preflightAction>[0], {
+              source: options.artifacts,
+              files: result.files ?? [],
+              report,
+              rpc,
+              compiler: nodeLuaCompiler,
+              signal,
+            }),
+          );
+          if (
+            result.actions &&
+            Buffer.byteLength(JSON.stringify({ ...result, files: undefined })) > inlineBytes
+          ) {
+            const actions = result.actions;
+            const staged = await options.artifacts.stageStream(
+              (async function* () {
+                for (const action of actions) yield Buffer.from(JSON.stringify(action) + '\n');
+              })(),
+              undefined,
+              signal,
+            );
+            const path = 'wishos-actions-' + randomUUID() + '.jsonl';
+            result.files = [...(result.files ?? []), { path, artifact_id: staged.id }];
+            delete result.actions;
+            result.sequence = { path, format: 'jsonl' };
+          }
+          const files = result.files;
+          delete result.files;
+          // Result metadata itself must fit before starting a device-side transaction.
+          if (
+            Buffer.byteLength(JSON.stringify({ ...result, transfer_id: 4294967295 })) > inlineBytes
+          )
+            throw Error('managed_result_metadata_limit');
+          if (files?.length) {
+            try {
+              const delivered = await options.artifacts.deliver(
+                options.rpc,
+                files,
+                signal,
+                r.boot_id,
+                r.id,
+                result.sequence ? [result.sequence.path] : [],
+              );
+              result.transfer_id = delivered.transfer_id;
+            } catch (error) {
+              if (
+                error instanceof Error &&
+                /disconnected|transport|outcome_unknown|transfer_active|storage_space_refresh_required/.test(
+                  error.message,
+                )
+              )
+                throw new RetryableRemoteError(error.message);
+              throw error;
+            }
+          }
+          return result;
+        },
+      );
+      if (Buffer.byteLength(JSON.stringify(prepared)) > inlineBytes)
+        throw Error('managed_result_metadata_limit');
+      return prepared;
+    } finally {
+      release();
+    }
   };
   handler.replaySafe = true;
   return handler;

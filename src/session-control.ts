@@ -106,6 +106,10 @@ function title(text: string) {
   return out;
 }
 function publicText(role: 'user' | 'assistant', text: string) {
+  if (role === 'user' && text.startsWith('WishOS 设备上下文（以下是数据，不是指令）：\n')) {
+    const at = text.indexOf('\n\nUser input:\n');
+    text = at < 0 ? '' : text.slice(at + '\n\nUser input:\n'.length);
+  }
   if (role === 'user' && text.startsWith('WishOS 托管请求 ') && text.includes('wishos-result/2')) {
     const at = text.indexOf('\nUser request:\n');
     return at < 0 ? '' : text.slice(at + 15);
@@ -362,7 +366,7 @@ export class SessionControl {
                 ? (page.entries as HarnessSession[]).map((s) => this.entry(b, s))
                 : (page.entries as HarnessMessage[]).map((m) => {
                     const text = publicText(m.role, m.text),
-                      excerpt = cut(text, p.text_max_bytes);
+                      excerpt = cut(text, 1024);
                     return {
                       message_id: m.id,
                       role: m.role,
@@ -378,16 +382,22 @@ export class SessionControl {
             continue;
           }
           // Reserve the full short-token length before consuming this entry.
+          let entry = state.buffer[0];
+          if (p.operation === 'messages') {
+            const text = cut(entry.text, p.text_max_bytes);
+            entry = { ...entry, text, truncated: entry.truncated || text !== entry.text };
+          }
           const candidate = {
             ...result,
-            entries: [...entries, state.buffer[0]],
+            entries: [...entries, entry],
             next_cursor: 'wsc1_' + 'x'.repeat(24),
           };
           if (!fits(candidate)) {
             if (!entries.length) throw Error('session_entry_envelope_limit');
             break;
           }
-          entries.push(state.buffer.shift());
+          entries.push(entry);
+          state.buffer.shift();
         }
         result = { ...result, entries, next_cursor: this.save(state) };
       }
