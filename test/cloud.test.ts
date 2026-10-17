@@ -463,6 +463,19 @@ test('cloud MCP follows authenticated connector to a LAN device and retains muta
       const s = await call('device_state', { device_id: 'device' });
       return s.route?.route === 'lan' ? s : false;
     });
+    const sessions = await call('harness_sessions', { device_id: 'device', operation: 'status' });
+    assert.equal(sessions.format, 'wishos-session-control/1');
+    assert.equal(sessions.ok, true);
+    assert.deepEqual(sessions.operations, ['status']);
+    const unsupported: any = await client.callTool({
+      name: 'harness_sessions',
+      arguments: { device_id: 'device', operation: 'list' },
+    });
+    assert.equal(unsupported.isError, true);
+    assert.equal(
+      JSON.parse(unsupported.content[0].text).error.code,
+      'session_operation_not_supported',
+    );
     const input = {
       device_id: 'device',
       path: '/dev/fixture',

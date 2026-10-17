@@ -7,6 +7,20 @@ import { SpeechUnavailable } from '../speech.js';
 import { RpcProcess, HarnessRpcError } from './rpc.js';
 import type { HarnessAdapter, AgentEvent } from './types.js';
 import { codexUsage } from './usage.js';
+import type { HarnessSession, HarnessMessage, HarnessPage } from './sessions.js';
+
+function sessionMetadata(thread: any): HarnessSession {
+  if (typeof thread?.id !== 'string' || !thread.id) throw Error('harness_session_identity');
+  return {
+    id: thread.id,
+    title: typeof thread.name === 'string' ? thread.name : '',
+    ...(typeof thread.preview === 'string' && thread.preview ? { summary: thread.preview } : {}),
+    ...(typeof thread.createdAt === 'number' ? { created_at: thread.createdAt } : {}),
+    ...(typeof thread.updatedAt === 'number' ? { updated_at: thread.updatedAt } : {}),
+    ...(typeof thread.status?.type === 'string' ? { state: thread.status.type } : {}),
+    ...(typeof thread.ephemeral === 'boolean' ? { ephemeral: thread.ephemeral } : {}),
+  };
+}
 
 export class CodexAdapter implements HarnessAdapter {
   name = 'codex';
@@ -126,15 +140,86 @@ export class CodexAdapter implements HarnessAdapter {
     await this.rpc.request('config/mcpServer/reload', {});
     return { refresh_requested: true, harness: 'codex', source: 'config/mcpServer/reload' };
   }
+  async listSessions(options: {
+    cursor?: string;
+    limit: number;
+  }): Promise<HarnessPage<HarnessSession>> {
+    await this.initialize();
+    const r = await this.rpc.request('thread/list', {
+      ...(options.cursor ? { cursor: options.cursor } : {}),
+      limit: options.limit,
+      archived: false,
+      modelProviders: [],
+    });
+    if (!Array.isArray(r.data)) throw Error('harness_session_page');
+    return { entries: r.data.map(sessionMetadata), next_cursor: r.nextCursor ?? null };
+  }
+  async readSession(id: string) {
+    await this.initialize();
+    const r = await this.rpc.request('thread/read', { threadId: id, includeTurns: false });
+    const session = sessionMetadata(r.thread);
+    if (session.id !== id) throw Error('harness_session_identity');
+    return session;
+  }
+  async createSession() {
+    if (this.closed || this.tainted) throw Error('Codex runtime unavailable');
+    await this.initialize();
+    const r = await this.rpc.request('thread/start', this.threadOptions);
+    const session = sessionMetadata(r.thread);
+    this.loaded.add(session.id);
+    return session;
+  }
+  async listMessages(
+    id: string,
+    options: { cursor?: string; limit: number },
+  ): Promise<HarnessPage<HarnessMessage>> {
+    await this.initialize();
+    // Native display-summary pages avoid full-history hydration and large tool bodies.
+    const r = await this.rpc.request('thread/turns/list', {
+      threadId: id,
+      limit: options.limit,
+      ...(options.cursor ? { cursor: options.cursor } : {}),
+      itemsView: 'summary',
+      sortDirection: 'desc',
+    });
+    if (!Array.isArray(r.data)) throw Error('harness_message_page');
+    const entries: HarnessMessage[] = [];
+    for (const turn of r.data)
+      for (const item of [...(turn.items ?? [])].reverse()) {
+        if (item.type === 'userMessage') {
+          const text = (item.content ?? [])
+            .filter((c: any) => c.type === 'text' && typeof c.text === 'string')
+            .map((c: any) => c.text)
+            .join('\n');
+          entries.push({
+            id: item.id,
+            role: 'user',
+            text,
+            preview: true,
+            ...(typeof turn.startedAt === 'number' ? { created_at: turn.startedAt } : {}),
+          });
+        } else if (
+          item.type === 'agentMessage' &&
+          [undefined, null, 'final', 'final_answer'].includes(item.phase) &&
+          typeof item.text === 'string'
+        )
+          entries.push({
+            id: item.id,
+            role: 'assistant',
+            text: item.text,
+            preview: true,
+            ...(typeof turn.completedAt === 'number' ? { created_at: turn.completedAt } : {}),
+          });
+      }
+    return { entries, next_cursor: r.nextCursor ?? null };
+  }
   async open(id?: string) {
     if (this.tainted) throw new Error('Codex runtime requires restart after an uncertain run');
+    if (!id) return (await this.createSession()).id;
     await this.initialize();
-    if (id && this.loaded.has(id)) return id;
-    const r = await this.rpc.request(
-      id ? 'thread/resume' : 'thread/start',
-      id ? { ...this.threadOptions, threadId: id } : this.threadOptions,
-    );
-    if (typeof r.thread?.id !== 'string') throw new Error('missing Codex thread id');
+    if (this.loaded.has(id)) return id;
+    const r = await this.rpc.request('thread/resume', { ...this.threadOptions, threadId: id });
+    if (r.thread?.id !== id) throw new Error('harness_session_identity');
     this.loaded.add(r.thread.id);
     return r.thread.id;
   }

@@ -166,3 +166,38 @@ test('a terminal collector failure immediately unblocks the next upload without 
     db.close();
   }
 });
+
+test('managed recording retries compare structured context by value and reject changed targets without discarding buffered audio', async () => {
+  const db = new DatabaseSync(':memory:'),
+    service = new OsAudioIngress(db, async () => ({}));
+  try {
+    const config = {
+      sample_rate: 16000,
+      managed_request: true,
+      managed_request_id: 'request',
+      request_scope: 'app-instance',
+      request_context: {
+        system: { current: { instance_id: 4, application_id: 'voice' } },
+        application: { intent: 'edit' },
+      },
+    };
+    service.begin('device', 'context', config);
+    service.append('device', 'context', [chunk(0)]);
+    service.begin('device', 'context', {
+      ...config,
+      request_context: {
+        application: { intent: 'edit' },
+        system: { current: { application_id: 'voice', instance_id: 4 } },
+      },
+    });
+    assert.equal(service.status('device', 'context').blocks, 1);
+    assert.throws(
+      () => service.begin('device', 'context', { ...config, request_scope: 'other-instance' }),
+      /configuration|conflict/,
+    );
+    assert.equal(service.status('device', 'context').blocks, 1);
+  } finally {
+    await service.close();
+    db.close();
+  }
+});

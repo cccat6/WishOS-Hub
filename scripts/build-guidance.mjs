@@ -32,7 +32,17 @@ await writeFile(
 
 const authoringFile = 'skills/wishos-applications/references/authoring-checklist.md';
 const authoringText = await readFile(authoringFile, 'utf8');
+const sessionFile = 'docs/session-control-contract.md';
+const sessionText = await readFile(sessionFile, 'utf8');
 const guidanceReferences = [
+  {
+    id: 'session-control',
+    uri: 'wishos://skills/wishos-applications/references/session-control',
+    mimeType: 'text/markdown',
+    sha256: createHash('sha256').update(sessionText).digest('hex'),
+    source: { repository: 'https://github.com/cccat6/WishOS-Hub', path: sessionFile },
+    text: sessionText,
+  },
   {
     id: 'application-checklist',
     uri: 'wishos://skills/wishos-applications/references/authoring-checklist',

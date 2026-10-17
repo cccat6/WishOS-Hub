@@ -20,6 +20,7 @@ class AudioError extends HttpError {
 import type { DatabaseSync } from 'node:sqlite';
 import { osAudioPacket, type OsAudioChunk } from './os-audio.js';
 import { decodeVoicePacket } from './voice-codec.js';
+import { canonicalValue } from './control-receipts.js';
 export type AudioConfig = {
   sample_rate: number;
   managed_request?: boolean;
@@ -29,6 +30,9 @@ export type AudioConfig = {
   max_gap_ms?: number;
   max_missing_ms?: number;
   max_loss_ratio?: number;
+  managed_request_id?: string;
+  request_context?: Record<string, unknown>;
+  request_scope?: string;
 };
 export type AudioFinal = { produced_samples: string; capture_failed: boolean };
 export type AudioReceipt = Record<string, unknown>;
@@ -120,6 +124,9 @@ export class OsAudioIngress {
           'max_gap_ms',
           'max_missing_ms',
           'max_loss_ratio',
+          'managed_request_id',
+          'request_context',
+          'request_scope',
         ].includes(key)
       )
         throw new AudioError('audio_configuration_field');
@@ -152,9 +159,23 @@ export class OsAudioIngress {
         (typeof value[key] !== 'string' || !value[key].length || value[key].length > 256)
       )
         throw new AudioError('audio_session');
-    return JSON.stringify(
-      Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))),
-    );
+    if (
+      value.request_context !== undefined &&
+      (!value.request_context ||
+        typeof value.request_context !== 'object' ||
+        Array.isArray(value.request_context))
+    )
+      throw new AudioError('audio_request_context');
+    for (const key of ['managed_request_id', 'request_scope'] as const)
+      if (
+        value[key] !== undefined &&
+        (typeof value[key] !== 'string' ||
+          !value[key]!.length ||
+          value[key]!.length > 128 ||
+          /[\r\n\0]/.test(value[key]!))
+      )
+        throw new AudioError('audio_request_identity');
+    return canonicalValue(JSON.parse(JSON.stringify(value)));
   }
   begin(device: string, id: string, config: AudioConfig) {
     this.validId(id);

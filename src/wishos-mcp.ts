@@ -65,8 +65,13 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
     description: string,
     shape: S,
     run: (input: z.infer<z.ZodObject<S>>) => Promise<CallToolResult>,
+    annotations?: { readOnlyHint?: boolean; idempotentHint?: boolean },
   ) {
-    server.registerTool(name, { description, inputSchema: z.object(shape) }, run);
+    server.registerTool(
+      name,
+      { description, inputSchema: z.object(shape), ...(annotations ? { annotations } : {}) },
+      run,
+    );
   }
   const invoke = async (
     device: string,
@@ -246,6 +251,70 @@ export function createWishosMcp(api: HubApi, options = { imagePreparation: true 
       activate: z.boolean().default(false),
       stop_current_before_transfer: z.boolean().default(false),
     },
+  );
+  const sessionReply = async (device_id: string, input: Record<string, unknown>) => {
+    const reply = await api(`/api/devices/${encodeURIComponent(device_id)}/sessions`, {
+      kind: 'session_control',
+      ...input,
+    });
+    const data = JSON.parse(reply.content[0]!.text);
+    if (data.ok && data.selected_session && ['select', 'create'].includes(data.operation)) {
+      const select = {
+        format: 'wishos-session-control/1',
+        operation: 'select',
+        ok: true,
+        runtime_id: data.runtime_id,
+        selected_session: data.selected_session,
+        ...(data.session ? { session: data.session } : {}),
+      };
+      return {
+        ...reply,
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({
+              ...data,
+              selection_action: {
+                type: 'application',
+                topic: 'session_control',
+                data: select,
+                wait: 'processed',
+              },
+            }),
+          },
+        ],
+      };
+    }
+    return { ...reply, isError: data.ok === false };
+  };
+  tool(
+    'harness_sessions',
+    '读取配置Harness的会话目录/元数据/近期公开消息，select只验证引用，不切设备或全局默认。语音切回旧会话：查询目录、select解析引用，再按用户意图把selection_action放进托管有序结果；应用保存并processed ACK后才确认已切换。只声明实际adapter支持的操作。',
+    {
+      device_id: z.string(),
+      operation: z.enum(['status', 'list', 'select', 'messages']),
+      runtime_id: z.string().optional(),
+      session_id: z.string().min(1).max(256).optional(),
+      session_scope: z.string().max(64).optional(),
+      cursor: z.string().max(128).nullable().optional(),
+      limit: z.number().int().min(1).max(20).optional(),
+      text_max_bytes: z.number().int().min(8).max(1024).optional(),
+      operation_id: z.string().max(64).optional(),
+    },
+    ({ device_id, ...input }) => sessionReply(device_id, input),
+    { readOnlyHint: true, idempotentHint: true },
+  );
+  tool(
+    'create_harness_session',
+    '用户显式要求新建时创建原生Harness会话，不发送模型任务。operation_id必须稳定保留，未知结果先status对账，不换新ID盲重试。工具本身不切设备；按用户意图有序返回selection_action。',
+    {
+      device_id: z.string(),
+      operation_id: z.string().regex(/^[A-Za-z0-9_.:-]{1,64}$/),
+      runtime_id: z.string().optional(),
+      session_scope: z.string().max(64).optional(),
+    },
+    ({ device_id, ...input }) => sessionReply(device_id, { ...input, operation: 'create' }),
+    { readOnlyHint: false, idempotentHint: true },
   );
   tool(
     'harness_usage',

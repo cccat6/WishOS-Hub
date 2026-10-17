@@ -28,6 +28,7 @@ import { DeviceRoutes } from './routes.js';
 import { ConnectorDiscovery, connectorHostname } from './mdns.js';
 import { ConnectorRelay } from './relay.js';
 import { runtimeCatalog, runtimeDescription } from './catalog.js';
+import { runtimeSessionScope } from '../session-control.js';
 import { clientConfigurations } from './mcp-config.js';
 import { LocalSecrets } from './secrets.js';
 import { LocalSpeechConfig, resolveSpeech } from './speech.js';
@@ -76,7 +77,7 @@ function allowedApi(path: string) {
     path === '/api/os/artifacts' ||
     path === '/api/os/artifacts/upload' ||
     /^\/api\/os\/devices\/[A-Za-z0-9_.:-]+\/invoke$/.test(path) ||
-    /^\/api\/devices\/[A-Za-z0-9_.:-]+\/(state|usage|tools)$/.test(path)
+    /^\/api\/devices\/[A-Za-z0-9_.:-]+\/(state|usage|tools|sessions)$/.test(path)
   );
 }
 async function executable(command: string) {
@@ -277,6 +278,9 @@ export class ConnectorServer {
         id: d.id,
         token: d.token,
         runtimeId: d.runtimeId,
+        runtimeScope: d.runtimeId
+          ? runtimeSessionScope(next.runtimes.find((r) => r.id === d.runtimeId)!)
+          : undefined,
         sessionId: d.sessionId,
         adapter: d.runtimeId ? adapters.get(d.runtimeId)! : new UnboundRuntime(),
       }));

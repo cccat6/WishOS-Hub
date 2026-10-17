@@ -68,3 +68,34 @@ test('fixed session and temporary target are independent; deduplication includes
     store.close();
   }
 });
+
+test('a learned default belongs to its runtime profile and does not leak into a replacement profile', async () => {
+  const store = new Store(':memory:'),
+    adapter = new SessionFixture();
+  const device = {
+    id: 'board',
+    token: '',
+    adapter,
+    runtimeId: 'runner',
+    runtimeScope: 'profile-a',
+  };
+  const hub = new Hub({ store, adminToken: '', devices: [device] });
+  try {
+    const one = hub.startRun('board', { request_id: 'learn', text: 'first' });
+    await until(() => store.run(one.id).status === 'completed');
+    assert.equal(hub.state('board').session_id, 'created-session');
+    device.runtimeScope = 'profile-b';
+    assert.equal(hub.state('board').session_id, null);
+    const status = await hub.controlSessions('board', {
+      kind: 'session_control',
+      operation: 'status',
+    });
+    assert.equal(status.default_session, null);
+    assert.equal(adapter.sent.length, 1);
+    device.runtimeScope = 'profile-a';
+    assert.equal(hub.state('board').session_id, 'created-session');
+  } finally {
+    await hub.close();
+    store.close();
+  }
+});

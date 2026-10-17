@@ -8,7 +8,15 @@ import { guardedInvocation } from './preflight-call.js';
 import { prepareImage } from './connect/image.js';
 import { TransportFailure } from './transport-failure.js';
 import { ArtifactStore } from './os-artifacts.js';
-import { managedAgentRoute, managedPrompt } from './os-agent.js';
+import { managedAgentRoute, managedText } from './os-agent.js';
+import { managedRequestScope } from './managed-context.js';
+import {
+  SessionControl,
+  SessionReferenceSchema,
+  runtimeSessionScope,
+  validateSessionReference,
+  type SessionBinding,
+} from './session-control.js';
 import { OsRpcSocket } from './os-rpc-socket.js';
 import { OsRemoteBridge, deviceRpc, type DeviceRpc, type RemoteHandler } from './os-remote.js';
 import { SqlRemoteJournal } from './os-journal.js';
@@ -32,6 +40,7 @@ export interface DeviceConfig {
   deviceUrl?: string;
   sessionId?: string;
   runtimeId?: string;
+  runtimeScope?: string;
 }
 export interface HubOptions {
   devices: DeviceConfig[];
@@ -49,14 +58,17 @@ export interface HubOptions {
 interface VoiceLane {
   sessionId: string | null;
   sessionReady?: Promise<string>;
+  requestScope?: string;
 }
 interface ForegroundRun {
   id: string;
   session: Promise<string>;
   done: Promise<void>;
+  requestScope?: string;
 }
 function bindingKey(d: DeviceConfig) {
-  return d.runtimeId ?? d.adapter.name;
+  const runtime = d.runtimeId ?? d.adapter.name;
+  return d.runtimeScope ? canonicalValue([runtime, d.runtimeScope]) : runtime;
 }
 function equal(a: string, b: string) {
   const x = Buffer.from(a),
@@ -118,6 +130,7 @@ export class Hub {
     }
   >();
   private osAudio: OsAudioIngress;
+  private sessions: SessionControl;
   private artifacts: ArtifactStore;
   readonly resourceJobs: ResourceJobs;
   private osVoiceBindings = new Map<string, VoiceLane>();
@@ -235,6 +248,7 @@ export class Hub {
       )
     )
       throw new Error('use unique device IDs and separate device/admin tokens');
+    this.sessions = new SessionControl(options.store.db);
     this.server.requestTimeout = 30000;
     this.server.headersTimeout = 10000;
     this.server.on('upgrade', (req, socket, head) => {
@@ -319,6 +333,7 @@ export class Hub {
   }
   hasActiveWork() {
     return (
+      this.sessions.activeCount > 0 ||
       this.resourceJobs.activeCount > 0 ||
       this.busy.size > 0 ||
       [...this.devices.keys()].some((id) => this.agentBusy(id)) ||
@@ -382,13 +397,35 @@ export class Hub {
       artifacts: this.artifacts,
       voice: handlers.voice,
       start: (r, text) =>
-        this.startRun(d.id, {
-          request_id: r.request_id,
-          text,
-          ...((r.payload.input as any)?.session_id !== undefined
-            ? { session_id: (r.payload.input as any).session_id }
-            : {}),
-        }),
+        this.startRun(
+          d.id,
+          {
+            request_id: r.request_id,
+            text,
+            ...((r.payload.input as any)?.session_id !== undefined
+              ? { session_id: (r.payload.input as any).session_id }
+              : {}),
+          },
+          false,
+          managedRequestScope(r),
+        ),
+      resolveSession: (input) => validateSessionReference(this.sessionBinding(d), input),
+      sessionControl: (r, input, fits) =>
+        this.sessions.invoke(this.sessionBinding(d), input, r.request_id, fits),
+      validateApplicationAction: async (action) => {
+        if (
+          action.topic === 'session_control' &&
+          action.data?.format === 'wishos-session-control/1' &&
+          action.data.operation === 'select' &&
+          action.data.ok === true
+        ) {
+          const selected = SessionReferenceSchema.parse(action.data.selected_session);
+          if (!selected || !d.adapter.readSession) throw Error('session_selection_unavailable');
+          validateSessionReference(this.sessionBinding(d), selected);
+          const session = await d.adapter.readSession(selected.session_id);
+          if (session.id !== selected.session_id) throw Error('session_identity_mismatch');
+        }
+      },
       status: (id) => this.options.store.run(id),
       cancel: async (id) => {
         const run = this.options.store.run(id);
@@ -453,7 +490,7 @@ export class Hub {
       boot_id: p?.boot ?? null,
       harness: d.adapter.name,
       speech: this.speech.describe(d.adapter),
-      session_id: this.options.store.session(id, bindingKey(d)) ?? d.sessionId ?? null,
+      session_id: this.defaultSession(d) ?? null,
       harness_capabilities: d.adapter.capabilities,
       active_run: this.busy.get(id) ?? null,
       pending_voice: this.osAudio.pending(id),
@@ -467,6 +504,23 @@ export class Hub {
     const device = this.devices.get(id);
     if (!device) throw new HttpError(404, 'unknown device');
     return device;
+  }
+  private defaultSession(d: DeviceConfig) {
+    return d.sessionId ?? this.options.store.session(d.id, bindingKey(d));
+  }
+  private sessionBinding(d: DeviceConfig): SessionBinding {
+    return {
+      device_id: d.id,
+      runtime_id: d.runtimeId ?? d.adapter.name,
+      scope:
+        d.runtimeScope ??
+        runtimeSessionScope({ id: d.runtimeId ?? d.adapter.name, kind: d.adapter.name }),
+      adapter: d.adapter,
+      default_session: this.defaultSession(d),
+    };
+  }
+  controlSessions(id: string, input: unknown, requestId = '') {
+    return this.sessions.invoke(this.sessionBinding(this.device(id)), input, requestId);
   }
   private async submitOsAudio(
     id: string,
@@ -486,6 +540,7 @@ export class Hub {
     if (!lane) {
       lane = {
         sessionId: config.resolved_session_id ?? config.session_id ?? null,
+        requestScope: config.request_scope,
       };
       this.osVoiceBindings.set(key, lane);
     }
@@ -499,7 +554,9 @@ export class Hub {
     const result = await this.submitVoice(
       id,
       voiceId,
-      config.managed_request ? managedPrompt(voiceId) + '\nUser request:\n' + text : text,
+      config.managed_request
+        ? managedText(config.managed_request_id ?? voiceId, text, config.request_context ?? {})
+        : text,
       lane,
     );
     return { ...result, transcript: text };
@@ -537,20 +594,24 @@ export class Hub {
           'max_missing_ms',
           'max_loss_ratio',
           'managed_request',
+          'managed_request_id',
+          'request_context',
+          'request_scope',
         ].includes(key)
       )
         throw new HttpError(400, 'audio_configuration_field');
     const d = this.device(id),
       prior = this.osAudio.binding(id, stream),
       pending = this.osAudio.pendingGroup(id);
-    const reuse = raw.session_id === undefined && pending?.session_id === undefined;
+    const reuse =
+      raw.session_id === undefined &&
+      pending?.session_id === undefined &&
+      raw.request_scope === pending?.request_scope;
     const group =
       prior?.binding_group ?? (reuse ? pending?.binding_group : undefined) ?? randomUUID();
     const chosen = Object.hasOwn(raw, 'session_id')
       ? raw.session_id
-      : ((reuse ? pending?.resolved_session_id : undefined) ??
-        this.options.store.session(id, bindingKey(d)) ??
-        d.sessionId);
+      : ((reuse ? pending?.resolved_session_id : undefined) ?? this.defaultSession(d));
     const config = {
       ...raw,
       binding_group: group,
@@ -560,7 +621,12 @@ export class Hub {
     if (!this.osVoiceBindings.has(group))
       this.osVoiceBindings.set(group, {
         sessionId: chosen ?? null,
-        sessionReady: raw.session_id === undefined ? this.foreground.get(id)?.session : undefined,
+        sessionReady:
+          raw.session_id === undefined &&
+          raw.request_scope === this.foreground.get(id)?.requestScope
+            ? this.foreground.get(id)?.session
+            : undefined,
+        requestScope: raw.request_scope,
       });
     return { ...result, limits: this.osAudio.limits };
   }
@@ -574,7 +640,11 @@ export class Hub {
       d = this.device(id);
     if (active) {
       const session = await active.session;
-      if (session === lane.sessionId && d.adapter.steer) {
+      if (
+        session === lane.sessionId &&
+        d.adapter.steer &&
+        active.requestScope === lane.requestScope
+      ) {
         this.options.store.db
           .prepare(
             'INSERT INTO voice_steers(device_id,request_id,run_id,session_id,text,status) VALUES(?,?,?,?,?,?)',
@@ -609,17 +679,18 @@ export class Hub {
       id,
       { request_id: 'voice:' + stream, text, session_id: lane.sessionId },
       true,
+      lane.requestScope,
     );
     lane.sessionReady = this.foreground.get(id)!.session;
     lane.sessionId = await lane.sessionReady;
     return { stage: 'submitted', run_id: run.id, session_id: lane.sessionId };
   }
-  startRun(id: string, raw: unknown, fromVoice = false) {
+  startRun(id: string, raw: unknown, fromVoice = false, requestScope?: string) {
     const d = this.device(id),
       input = SessionInput.parse(raw);
     const sessionRequest =
       input.session_id === undefined ? 'default' : JSON.stringify(input.session_id);
-    const defaultSession = this.options.store.session(id, bindingKey(d)) ?? d.sessionId;
+    const defaultSession = this.defaultSession(d);
     const targetSession =
       input.session_id === null ? undefined : (input.session_id ?? defaultSession);
     const old = this.options.store.db
@@ -651,6 +722,7 @@ export class Hub {
       id: run.id,
       session: sessionReady,
       done: Promise.resolve(),
+      requestScope,
     };
     this.foreground.set(id, foreground);
     const emit = (e: AgentEvent) => {
@@ -808,17 +880,18 @@ export class Hub {
       throw new HttpError(404, 'audio_operation');
     }
     let m = u.pathname.match(
-      /^\/api\/devices\/([a-zA-Z0-9_.:-]+)\/(state|messages|interrupt|usage|tools)$/,
+      /^\/api\/devices\/([a-zA-Z0-9_.:-]+)\/(state|messages|interrupt|usage|tools|sessions)$/,
     );
     if (m) {
       const id = m[1]!,
         action = m[2]!;
       this.device(id);
+      if (action === 'sessions' && req.method === 'POST')
+        return reply(res, 200, await this.controlSessions(id, await body(req)));
       if (action === 'state' && req.method === 'GET') return reply(res, 200, this.state(id));
       if (action === 'usage' && req.method === 'GET') {
         const adapter = this.device(id).adapter;
-        const session =
-          this.options.store.session(id, bindingKey(this.device(id))) ?? this.device(id).sessionId;
+        const session = this.defaultSession(this.device(id));
         const usage = adapter.readUsage
           ? await adapter.readUsage(session)
           : {
@@ -832,7 +905,7 @@ export class Hub {
       }
       if (action === 'tools' && req.method === 'GET') {
         const d = this.device(id);
-        const session = this.options.store.session(id, bindingKey(d)) ?? d.sessionId;
+        const session = this.defaultSession(d);
         if (!d.adapter.readTools || !session)
           return reply(res, 200, {
             available: false,
@@ -853,7 +926,9 @@ export class Hub {
         const d = this.device(id);
         if (!d.adapter.interrupt)
           throw new HttpError(409, 'harness does not support safe per-turn interruption');
-        const s = this.options.store.session(id, bindingKey(d));
+        const s = this.foreground.get(id)
+          ? await this.foreground.get(id)!.session
+          : this.defaultSession(d);
         if (!s) throw new HttpError(409, 'no session');
         await d.adapter.interrupt(s);
         return reply(res, 202, { interruption_requested: true });
@@ -899,6 +974,7 @@ export class Hub {
     return this.server.address();
   }
   async close() {
+    this.sessions.close();
     this.stopping = true;
     this.serviceAbort.abort();
     if (!this.options.resourceJobs) await this.resourceJobs.close();

@@ -123,6 +123,11 @@ export function voiceRoute(
         sample_rate: capture.sample_rate,
         ...(r.payload.managed_request ? { managed_request: r.payload.managed_request } : {}),
         ...(Object.hasOwn(r.payload, 'session_id') ? { session_id: r.payload.session_id } : {}),
+        ...(r.payload.managed_request_id
+          ? { managed_request_id: r.payload.managed_request_id }
+          : {}),
+        ...(r.payload.request_context ? { request_context: r.payload.request_context } : {}),
+        ...(r.payload.request_scope ? { request_scope: r.payload.request_scope } : {}),
       },
       signal,
     );

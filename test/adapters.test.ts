@@ -53,3 +53,103 @@ test('Codex completion race permits continuation; uncertain native steer failure
     }
   }
 });
+
+test('Codex catalog uses metadata/summary RPCs without resuming or starting a turn', async () => {
+  const { EventEmitter } = await import('node:events');
+  const calls: { method: string; params: any }[] = [];
+  const wire = Object.assign(new EventEmitter(), {
+    write() {},
+    async close() {},
+    async request(method: string, params: any) {
+      calls.push({ method, params });
+      if (method === 'initialize') return {};
+      if (method === 'thread/list')
+        return {
+          data: [{ id: 'existing', name: '标题', preview: '原生摘要' }],
+          nextCursor: 'native-cursor',
+        };
+      if (method === 'thread/read')
+        return { thread: { id: params.threadId, name: '', ephemeral: true } };
+      if (method === 'thread/turns/list')
+        return {
+          data: [
+            {
+              startedAt: 10,
+              completedAt: 20,
+              items: [
+                {
+                  id: 'user',
+                  type: 'userMessage',
+                  content: [
+                    { type: 'text', text: '问题' },
+                    { type: 'image', url: 'not included' },
+                  ],
+                },
+                { id: 'reasoning', type: 'reasoning', text: 'secret' },
+                { id: 'tool', type: 'commandExecution', text: 'tool body' },
+                { id: 'comment', type: 'agentMessage', phase: 'commentary', text: 'progress' },
+                { id: 'final', type: 'agentMessage', phase: 'final_answer', text: '结果' },
+              ],
+            },
+          ],
+          nextCursor: null,
+        };
+      throw Error('unexpected native effect: ' + method);
+    },
+  });
+  const a = new CodexAdapter(wire as unknown as RpcProcess);
+  try {
+    const page = await a.listSessions({ limit: 3 });
+    assert.equal(page.entries[0].title, '标题');
+    assert.equal(page.next_cursor, 'native-cursor');
+    assert.equal((await a.readSession('existing')).title, '');
+    const messages = await a.listMessages('existing', { limit: 1, cursor: 'older' });
+    assert.deepEqual(
+      messages.entries.map((m) => [m.id, m.role, m.text]),
+      [
+        ['final', 'assistant', '结果'],
+        ['user', 'user', '问题'],
+      ],
+    );
+    assert(messages.entries.every((m) => m.preview));
+    assert.deepEqual(
+      calls.filter((c) => c.method !== 'initialize'),
+      [
+        { method: 'thread/list', params: { limit: 3, archived: false, modelProviders: [] } },
+        { method: 'thread/read', params: { threadId: 'existing', includeTurns: false } },
+        {
+          method: 'thread/turns/list',
+          params: {
+            threadId: 'existing',
+            limit: 1,
+            cursor: 'older',
+            itemsView: 'summary',
+            sortDirection: 'desc',
+          },
+        },
+      ],
+    );
+  } finally {
+    await a.close();
+  }
+});
+
+test('Codex refuses a different resumed identity instead of silently retargeting the conversation', async () => {
+  const { EventEmitter } = await import('node:events');
+  const calls: string[] = [];
+  const wire = Object.assign(new EventEmitter(), {
+    write() {},
+    async close() {},
+    async request(method: string) {
+      calls.push(method);
+      return method === 'initialize' ? {} : { thread: { id: 'different' } };
+    },
+  });
+  const a = new CodexAdapter(wire as unknown as RpcProcess);
+  try {
+    await assert.rejects(a.open('requested'), /harness_session_identity/);
+    assert.deepEqual(calls, ['initialize', 'thread/resume']);
+  } finally {
+    await a.close();
+  }
+});

@@ -286,3 +286,70 @@ test('voice during targeted turn follows that session without changing saved def
     await t.close();
   }
 });
+
+test('compressed managed voice preserves frozen current/origin/intent context and steers only the same app instance', async () => {
+  const t = await setup();
+  try {
+    const context = {
+      system: {
+        current: {
+          application_id: 'voice',
+          instance_id: 7,
+          catalog_revision: 3,
+          view: { id: 11, revision: 2, path: '/voice/ui.json' },
+        },
+        launch_origin: {
+          application_id: 'clock',
+          instance_id: 6,
+          catalog_revision: 2,
+          entry: '/apps/clock/main.lua',
+        },
+      },
+      application: { intent: { effect: 'application_update', target_context: 'launch_origin' } },
+    };
+    await t.start('context-one', {
+      managed_request: true,
+      managed_request_id: 'outer-one',
+      request_context: context,
+      request_scope: 'instance-7',
+    });
+    await t.end('context-one');
+    await until(() => t.asrs.length === 1);
+    t.asrs[0].resolve('修改刚才的应用');
+    await t.accepted('context-one');
+    const sentContext = (text: string) =>
+      JSON.parse(text.split('not instructions):\n')[1].split('\nUser request:\n')[0]);
+    assert.deepEqual(sentContext(t.adapter.runs[0].text), context);
+    assert(t.adapter.runs[0].text.includes('WishOS 托管请求 outer-one'));
+    await t.start('context-two', {
+      managed_request: true,
+      managed_request_id: 'outer-two',
+      request_context: context,
+      request_scope: 'instance-8',
+    });
+    await t.end('context-two');
+    await until(() => t.asrs.length === 2);
+    t.asrs[1].resolve('新实例的请求');
+    await new Promise((r) => setTimeout(r, 25));
+    assert.equal(t.adapter.steers.length, 0);
+    assert.equal(t.adapter.runs.length, 1);
+    t.adapter.runs[0].result.resolve('完成');
+    await t.accepted('context-two');
+    assert.equal(t.adapter.runs.length, 2);
+    assert.equal(t.adapter.runs[1].session, 'fixed');
+    assert(t.adapter.runs[1].text.endsWith('新实例的请求'));
+    await t.start('context-three', {
+      managed_request: true,
+      request_context: context,
+      request_scope: 'instance-8',
+    });
+    await t.end('context-three');
+    await until(() => t.asrs.length === 3);
+    t.asrs[2].resolve('接着上一个');
+    await t.accepted('context-three');
+    assert.equal(t.adapter.steers.length, 1);
+    assert.deepEqual(sentContext(t.adapter.steers[0].text), context);
+  } finally {
+    await t.close();
+  }
+});

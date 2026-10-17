@@ -40,3 +40,9 @@ UI 描述交给系统渲染，应用提供内容和行为；出厂套装也是�
 更新按 wishos-packages 指南替换完整文件，构造不可变完整 revision 并先预检。
 安装与激活分开；不覆盖运行中版本、系统资源或旧应用的用户数据。
 动态路径无法静态证明时使用正常运行时错误处理，不能声称预检已验证一切。
+
+会话选择、固定 bot 与应用修改请求，先读 `get_guidance {component_id:"session-control"}`。
+应用通过系统 AI 服务提交 session_control；Harness 原生运行时拥有会话历史和凭据，
+应用只保存会话引用/模式/未完成操作 ID。文字与语音都保留提交时 current/launch_origin
+快照和显式 intent，不能根据请求完成时的前台猜修改目标。语音切换旧会话可经 MCP
+解析目录引用，再有序交付 selection_action；工具返回不是应用已切换的证明。

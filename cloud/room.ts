@@ -511,7 +511,7 @@ export class WishosRoom extends DurableObject<WishosCloudEnv> {
       return job;
     }
     const invoke = path.match(/^\/api\/os\/devices\/([A-Za-z0-9_.:-]+)\/invoke$/),
-      state = path.match(/^\/api\/devices\/([A-Za-z0-9_.:-]+)\/(state|usage|tools)$/);
+      state = path.match(/^\/api\/devices\/([A-Za-z0-9_.:-]+)\/(state|usage|tools|sessions)$/);
     if (path === '/api/os/receipts/read') {
       const input = payload as any;
       if (
