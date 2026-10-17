@@ -443,6 +443,8 @@ try {
     at: new Date().toISOString(),
     job_timeout_ms: jobTimeoutMs,
     job_timeout_source: jobTimeoutSource,
+    elapsed_ms: Date.now() - started,
+    progress,
   };
 } catch (error) {
   failure = error;
