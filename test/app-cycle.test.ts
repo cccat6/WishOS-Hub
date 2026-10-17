@@ -4,6 +4,11 @@ import { createHash } from 'node:crypto';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { DatabaseSync } from 'node:sqlite';
+import { ArtifactStore } from '../src/os-artifacts.js';
+import { preparePackage } from '../src/packages.js';
+import { preflightBundle } from '../src/preflight.js';
+import { nodeLuaCompiler } from '../src/node-lua-compiler.js';
 import { prepare } from '../scripts/check-app-cycle.mjs';
 import {
   requireCurrentContext,
@@ -11,6 +16,7 @@ import {
   forkPayload,
   nativeFrameMatches,
   extractManagedContext,
+  packagePayload,
 } from '../scripts/p1-app-cycle.mjs';
 const hash = (x: Uint8Array | string) => createHash('sha256').update(x).digest('hex');
 const current = () => ({
@@ -50,6 +56,8 @@ test('matching paths are not enough: Native completion must match active owner/v
       presentation: {
         last_presented_view: 7,
         last_presented_revision: 2,
+        activation: 5,
+        last_presented_activation: 5,
         views: [{ id: 7, owner: 41 }],
       },
     };
@@ -58,6 +66,9 @@ test('matching paths are not enough: Native completion must match active owner/v
   assert(!nativeFrameMatches(c, ui, { loaded: true, fault: false }));
   ui.presentation.last_presented_revision = 2;
   ui.presentation.views[0].owner = 40;
+  assert(!nativeFrameMatches(c, ui, { loaded: true, fault: false }));
+  ui.presentation.views[0].owner = 41;
+  ui.presentation.last_presented_activation = 4;
   assert(!nativeFrameMatches(c, ui, { loaded: true, fault: false }));
 });
 test('candidate review and save-as preserve code and source identity while allowing the requested UI change', () => {
@@ -155,6 +166,53 @@ test('offline fixture preparation builds a complete package without filling a ta
       hash(await readFile(join(out, 'baseline/p1.lua'))),
       state.baseline.lua_sha256['p1.lua'],
     );
+    const db = new DatabaseSync(':memory:'),
+      store = new ArtifactStore(db, join(root, 'server-artifacts'));
+    try {
+      const stage = async (path: string, text: string, kind?: string) => ({
+        path,
+        kind,
+        artifact_id: (await store.stage({ text })).id,
+      });
+      const compiled = await packagePayload(
+        state.baseline.files,
+        (p: string) => readFile(join(out, 'baseline', p), 'utf8'),
+        stage,
+        (files: any) =>
+          preparePackage(store, (text) => store.stage({ text }), files, 'app.json', {
+            compiler: nodeLuaCompiler,
+            signal: AbortSignal.timeout(30000),
+          }),
+      );
+      assert(compiled.preflight.ok);
+      const oldMetadata = [
+        ...compiled.files.filter((f) => !['package.json', 'files.jsonl'].includes(f.path)),
+        await stage(
+          'package.json',
+          await readFile(join(out, 'baseline/package.json'), 'utf8'),
+          'json',
+        ),
+        await stage('files.jsonl', await readFile(join(out, 'baseline/files.jsonl'), 'utf8')),
+      ];
+      await assert.rejects(
+        preflightBundle(store, oldMetadata, {
+          compiler: nodeLuaCompiler,
+          signal: AbortSignal.timeout(30000),
+        }),
+        /inventory_file_identity/,
+      );
+      await assert.rejects(
+        packagePayload(
+          ['package.json'],
+          () => '',
+          stage,
+          () => {},
+        ),
+        /metadata must be regenerated/,
+      );
+    } finally {
+      db.close();
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }
