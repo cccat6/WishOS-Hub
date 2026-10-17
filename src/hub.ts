@@ -20,7 +20,7 @@ import {
 import { OsRpcSocket } from './os-rpc-socket.js';
 import { OsRemoteBridge, deviceRpc, type DeviceRpc, type RemoteHandler } from './os-remote.js';
 import { SqlRemoteJournal } from './os-journal.js';
-import { voiceRoute, type AudioDeliveryProgress } from './os-voice-route.js';
+import { voiceRoute, type AudioDeliveryProgress, type VoiceRoute } from './os-voice-route.js';
 import { OsAudioIngress, AudioLimits, type AudioConfig } from './os-audio-ingress.js';
 import { SpeechSettings } from './speech.js';
 import { McpHttp } from './mcp-http.js';
@@ -127,6 +127,7 @@ export class Hub {
       online: boolean;
       timer: NodeJS.Timeout;
       abort: AbortController;
+      voice: VoiceRoute;
     }
   >();
   private osAudio: OsAudioIngress;
@@ -331,6 +332,11 @@ export class Hub {
   bindDeviceRpc(id: string, rpc: DeviceRpc) {
     this.attachOs(this.device(id), rpc);
   }
+  observeDeviceConnection(id: string, boot: string) {
+    const peer = this.osPeers.get(id);
+    if (peer && !peer.abort.signal.aborted)
+      this.track(peer.voice.discover(boot, peer.abort.signal).catch(() => {}));
+  }
   hasActiveWork() {
     return (
       this.sessions.activeCount > 0 ||
@@ -368,30 +374,28 @@ export class Hub {
       return { state: 'accepted', run_id: run.id };
     };
     agent.replaySafe = true;
-    const handlers: Record<string, RemoteHandler> = {
-      agent,
-      voice: voiceRoute(
-        bound,
-        async (id, action, args) => {
-          if (action === 'begin') return this.beginOsAudio(d.id, id, args as AudioConfig);
-          if (action === 'chunks') return this.osAudio.append(d.id, id, args!.chunks as any);
-          if (action === 'finish') return this.osAudio.finish(d.id, id, args as any);
-          if (action === 'abort') return this.osAudio.abortUpload(d.id, id, args!.error as string);
-          return this.osAudio.status(d.id, id);
+    const voice = voiceRoute(
+      bound,
+      async (id, action, args) => {
+        if (action === 'begin') return this.beginOsAudio(d.id, id, args as AudioConfig);
+        if (action === 'chunks') return this.osAudio.append(d.id, id, args!.chunks as any);
+        if (action === 'finish') return this.osAudio.finish(d.id, id, args as any);
+        if (action === 'abort') return this.osAudio.abortUpload(d.id, id, args!.error as string);
+        return this.osAudio.status(d.id, id);
+      },
+      {
+        onProgress: (progress) => {
+          const current = this.audioDelivery.get(d.id);
+          if (
+            !current ||
+            current.recording_id === progress.recording_id ||
+            (progress.phase === 'receiving' && progress.reads === 0)
+          )
+            this.audioDelivery.set(d.id, progress);
         },
-        {
-          onProgress: (progress) => {
-            const current = this.audioDelivery.get(d.id);
-            if (
-              !current ||
-              current.recording_id === progress.recording_id ||
-              (progress.phase === 'receiving' && progress.reads === 0)
-            )
-              this.audioDelivery.set(d.id, progress);
-          },
-        },
-      ),
-    };
+      },
+    );
+    const handlers: Record<string, RemoteHandler> = { agent, voice };
     handlers['wishos.ai'] = managedAgentRoute({
       rpc: bound,
       artifacts: this.artifacts,
@@ -445,8 +449,10 @@ export class Hub {
       online: !!socket,
       timer: undefined as unknown as NodeJS.Timeout,
       abort,
+      voice,
     };
     this.osPeers.set(d.id, entry);
+    if (socket?.boot) this.observeDeviceConnection(d.id, socket.boot);
     const poll = async () => {
       const began = performance.now();
       try {

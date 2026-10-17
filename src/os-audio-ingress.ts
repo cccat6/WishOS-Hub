@@ -59,6 +59,7 @@ type Row = {
 /** Server-side durable ingress, separate from embedded recording policy and from
  * Harness execution. A completed upload can be acknowledged before ASR finishes. */
 export const AudioLimits = {
+  batch_blocks: 32,
   compressed_bytes: 8 * 1024 * 1024,
   decoded_bytes: 32 * 1024 * 1024,
   streams_per_device: 4,
@@ -207,7 +208,8 @@ export class OsAudioIngress {
   append(device: string, id: string, chunks: OsAudioChunk[]) {
     const row = this.row(device, id);
     if (!row || row.state !== 'receiving') throw new AudioError('audio_not_receiving');
-    if (!Array.isArray(chunks) || chunks.length > 32) throw new AudioError('audio_batch_limit');
+    if (!Array.isArray(chunks) || chunks.length > this.limits.batch_blocks)
+      throw new AudioError('audio_batch_limit');
     const records = chunks.map((chunk) => {
       let packet: Buffer;
       try {
@@ -322,6 +324,7 @@ export class OsAudioIngress {
       blocks: row.blocks,
       bytes: row.bytes,
       next_sequence: row.next_sequence,
+      limits: { batch_blocks: this.limits.batch_blocks },
       ...(row.receipt ? { result: JSON.parse(row.receipt) } : {}),
     };
   }

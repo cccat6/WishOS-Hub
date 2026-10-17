@@ -238,6 +238,7 @@ export class ConnectorServer {
       () => peer.diagnostics(),
     );
     peer.once('closed', detach);
+    this.hub?.observeDeviceConnection(id, peer.boot);
   }
   private async apply(next: ConnectorConfig, persist = true) {
     if (

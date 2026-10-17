@@ -7,6 +7,10 @@ import {
   type RemoteHandler,
   type RemoteRequest,
 } from './os-remote.js';
+import { unpackOsAudioBatch } from './os-audio.js';
+export type VoiceRoute = RemoteHandler & {
+  discover: (boot: string, signal: AbortSignal) => Promise<void>;
+};
 export type AudioApi = (
   id: string,
   action: string,
@@ -33,6 +37,7 @@ export type AudioDeliveryProgress = {
   ack_mode: 'read_ack' | 'legacy';
   piggyback_acks: number;
   standalone_acks: number;
+  read_method: 'read_chunk' | 'read_batch';
 };
 const pause = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
@@ -58,7 +63,54 @@ export function voiceRoute(
     batchBlocks?: number;
     onProgress?: (progress: AudioDeliveryProgress) => void;
   } = {},
-): RemoteHandler {
+): VoiceRoute {
+  let capabilityBoot = '',
+    maximumBatchChunks = 0;
+  let discoveryGeneration = 0;
+  let discovery: { boot: string; work: Promise<void> } | undefined;
+  const discover = async (boot: string, signal: AbortSignal) => {
+    if (signal.aborted) return;
+    if (capabilityBoot === boot) return;
+    if (discovery?.boot === boot) return discovery.work;
+    const generation = ++discoveryGeneration;
+    maximumBatchChunks = 0;
+    const work = (async () => {
+      const response = await rpc(
+        '/sys/capabilities',
+        'describe',
+        {
+          path: '/dev/mic',
+          expected_boot_id: boot,
+        },
+        { priority: 'background' },
+      );
+      if (
+        signal.aborted ||
+        !response.ok ||
+        response.boot_id !== boot ||
+        generation !== discoveryGeneration
+      )
+        return;
+      const spec = response.result?.batch_read;
+      maximumBatchChunks =
+        response.ok &&
+        spec?.method === 'read_batch' &&
+        spec.format === 'wishos-audio-batch/1' &&
+        spec.acknowledgement_cursor === 'after_sequence' &&
+        Number.isSafeInteger(spec.maximum_chunks) &&
+        spec.maximum_chunks > 0 &&
+        spec.maximum_chunks <= 65535
+          ? spec.maximum_chunks
+          : 0;
+      capabilityBoot = boot;
+    })();
+    discovery = { boot, work };
+    try {
+      await work;
+    } finally {
+      if (discovery?.work === work) discovery = undefined;
+    }
+  };
   const state = new Map<
     string,
     {
@@ -81,6 +133,45 @@ export function voiceRoute(
     if (!r.ok) throw Error(r.error ?? 'audio_device_error');
     return r.result;
   };
+  const readMethod = (boot?: string) =>
+    boot === capabilityBoot && maximumBatchChunks ? 'read_batch' : 'read_chunk';
+  const readCapture = async (request: RemoteRequest, args: Record<string, unknown>) => {
+    const method = readMethod(request.boot_id);
+    const limit =
+      method === 'read_batch'
+        ? Math.min(options.batchBlocks ?? maximumBatchChunks, maximumBatchChunks)
+        : (options.batchBlocks ?? 16);
+    let capture;
+    try {
+      capture = await device(method, { ...args, limit });
+    } catch (error) {
+      if (
+        method !== 'read_batch' ||
+        !(error instanceof Error) ||
+        !['unsupported_method', 'method_not_supported', 'unknown_method'].includes(error.message)
+      )
+        throw error;
+      maximumBatchChunks = 0;
+      return {
+        ...(await device('read_chunk', { ...args, limit: options.batchBlocks ?? 16 })),
+        read_method: 'read_chunk',
+      };
+    }
+    if (method === 'read_batch') {
+      if (
+        capture.batch_encoding !== 'wishos-audio-batch/1' ||
+        capture.encoding !== 'ima-adpcm' ||
+        typeof capture.batch_b64 !== 'string'
+      )
+        throw Error('invalid_audio_batch_format');
+      return {
+        ...capture,
+        chunks: unpackOsAudioBatch(capture.batch_b64, limit),
+        read_method: method,
+      };
+    }
+    return { ...capture, read_method: method };
+  };
   const identity = (r: RemoteRequest) => {
     const id = r.payload.recording_id;
     if (typeof id !== 'string' || !id) throw Error('recording_id_required');
@@ -100,7 +191,7 @@ export function voiceRoute(
     let readMs = 0,
       readAt = 0;
     try {
-      capture = await device('read_chunk', { recording_id: id, limit: options.batchBlocks ?? 16 });
+      capture = await readCapture(r, { recording_id: id });
       readMs = Math.round(performance.now() - started);
       readAt = Date.now();
       // Older read_chunk replies may omit metadata while still returning data.
@@ -163,6 +254,7 @@ export function voiceRoute(
       ack_mode: 'read_ack',
       piggyback_acks: 0,
       standalone_acks: 0,
+      read_method: admission?.first?.read_method ?? readMethod(r.boot_id),
     };
     const publish = () => {
       progress.elapsed_ms = Math.round(performance.now() - started);
@@ -187,6 +279,20 @@ export function voiceRoute(
     };
     try {
       let status = await api(id, '', undefined, signal);
+      const append = async (chunks: unknown[]) => {
+        const maximum = status.limits?.batch_blocks ?? 32; // Legacy ingress boundary.
+        if (!Number.isSafeInteger(maximum) || maximum < 1) throw Error('audio_ingress_limits');
+        for (let offset = 0; offset < chunks.length; offset += maximum) {
+          status = await api(
+            id,
+            'chunks',
+            { chunks: chunks.slice(offset, offset + maximum) },
+            signal,
+          );
+          if (status.durable !== true) throw Error('audio_durable_receipt_required');
+          signal.throwIfAborted();
+        }
+      };
       if (status.state === 'receiving') {
         let capture: any;
         let first = admission?.first;
@@ -205,12 +311,11 @@ export function voiceRoute(
             } else {
               const args: Record<string, unknown> = {
                 recording_id: id,
-                limit: options.batchBlocks ?? 16,
                 ...(piggyback && pendingAck !== undefined ? { after_sequence: pendingAck } : {}),
               };
               let rejected = false;
               try {
-                capture = await device('read_chunk', args);
+                capture = await readCapture(r, args);
               } catch (error) {
                 // Older adapters explicitly reject the optional read/ack field before
                 // effects. Never retry an unknown transport outcome as a legacy read.
@@ -238,9 +343,8 @@ export function voiceRoute(
                 await device('ack', { recording_id: id, next_sequence: pendingAck });
                 progress.standalone_acks++;
                 acknowledged(pendingAck!);
-                capture = await device('read_chunk', {
+                capture = await readCapture(r, {
                   recording_id: id,
-                  limit: options.batchBlocks ?? 16,
                 });
               }
               if (piggyback && pendingAck !== undefined) {
@@ -251,6 +355,7 @@ export function voiceRoute(
               progress.read_ms = Math.round(performance.now() - began);
             }
             progress.reads++;
+            progress.read_method = capture.read_method ?? 'read_chunk';
             progress.max_read_ms = Math.max(progress.max_read_ms, progress.read_ms);
             progress.device_dropped_samples = capture.dropped_samples ?? '0';
             if (capture.chunks.length) progress.first_batch_at_ms ??= Date.now();
@@ -271,9 +376,7 @@ export function voiceRoute(
           archive = capture.file || archive;
           retention = capture.storage_requested ?? retention;
           if (capture.chunks.length) {
-            status = await api(id, 'chunks', { chunks: capture.chunks }, signal);
-            if (status.durable !== true) throw Error('audio_durable_receipt_required');
-            signal.throwIfAborted();
+            await append(capture.chunks);
             progress.blocks = status.blocks ?? progress.blocks + capture.chunks.length;
             // offered_sequence is a device-wide peek high-water mark, not proof
             // that this host durably received every previously offered packet.
@@ -323,7 +426,7 @@ export function voiceRoute(
               }
               throw error;
             }
-            if (batch.chunks.length) await api(id, 'chunks', { chunks: batch.chunks }, signal);
+            if (batch.chunks.length) await append(batch.chunks);
             if (!batch.more) break;
             if (batch.next_cursor <= cursor) throw Error('recording_cursor');
             cursor = batch.next_cursor;
@@ -394,7 +497,7 @@ export function voiceRoute(
   };
   handler.admit = admit;
   handler.replaySafe = true;
-  return handler;
+  return Object.assign(handler, { discover });
 }
 export function httpAudioApi(
   hub: string,

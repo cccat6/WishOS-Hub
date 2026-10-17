@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { voiceRoute, type AudioDeliveryProgress } from '../src/os-voice-route.js';
 import { OsAudioIngress } from '../src/os-audio-ingress.js';
 import type { DeviceRpc } from '../src/os-remote.js';
+import { packBatch } from './fixtures/audio-batch.js';
 
 function fixture(
   options: {
@@ -16,12 +17,20 @@ function fixture(
     omitRate?: boolean;
     totalBlocks?: number;
     cancelDuringRead?: boolean;
+    batch?: boolean;
+    batchUnsupported?: boolean;
+    malformedBatch?: boolean;
+    ingressBatch?: number;
   } = {},
 ) {
   const db = new DatabaseSync(':memory:');
   const controller = new AbortController(),
     apiActions: string[] = [];
-  const ingress = new OsAudioIngress(db, async () => ({ run_id: 'native-run' }));
+  const ingress = new OsAudioIngress(
+    db,
+    async () => ({ run_id: 'native-run' }),
+    options.ingressBatch ? { batch_blocks: options.ingressBatch } : {},
+  );
   const received = new Set<number>(),
     events: AudioDeliveryProgress[] = [];
   let time = 0,
@@ -63,12 +72,31 @@ function fixture(
     };
   };
   const rpc: DeviceRpc = async (_path, method, args) => {
+    if (_path === '/sys/capabilities') {
+      calls.push({ method, args, at: time });
+      return {
+        ok: true,
+        boot_id: 'b',
+        result: options.batch
+          ? {
+              batch_read: {
+                method: 'read_batch',
+                maximum_chunks: 40,
+                acknowledgement_cursor: 'after_sequence',
+                format: 'wishos-audio-batch/1',
+              },
+            }
+          : {},
+      };
+    }
     advance();
     calls.push({ method, args, at: time });
     let result: any = {};
+    if (method === 'read_batch' && options.batchUnsupported)
+      return { ok: false, boot_id: 'b', error: 'unsupported_method', result: {} };
     if (method === 'ack') ack(args.next_sequence as number);
-    if (method === 'read' || method === 'read_chunk') {
-      if (method === 'read_chunk' && 'after_sequence' in args) {
+    if (method === 'read' || method === 'read_chunk' || method === 'read_batch') {
+      if (['read_chunk', 'read_batch'].includes(method) && 'after_sequence' in args) {
         if (options.cancelDuringRead) controller.abort(Error('request_retired'));
         if (options.failReadAck) throw Error('connection_lost');
         if (options.legacy) {
@@ -77,8 +105,9 @@ function fixture(
         }
         if (!options.ignoredAck) ack(args.after_sequence as number);
       }
-      const chunks =
-        method === 'read_chunk' ? queue.slice(0, Math.min(Number(args.limit), 11)).map(chunk) : [];
+      const chunks = ['read_chunk', 'read_batch'].includes(method)
+        ? queue.slice(0, Math.min(Number(args.limit), method === 'read_batch' ? 24 : 11)).map(chunk)
+        : [];
       if (method === 'read_chunk' && produced === total && queue.length === 0) {
         emptyReads++;
         return { ok: false, boot_id: 'b', error: 'recording_not_found', result: {} };
@@ -99,6 +128,12 @@ function fixture(
           : highest,
         acknowledged_sequence: acknowledged,
       };
+      if (method === 'read_batch') {
+        result.encoding = 'ima-adpcm';
+        result.batch_encoding = 'wishos-audio-batch/1';
+        result.batch_b64 = options.malformedBatch ? 'broken' : packBatch(chunks);
+        delete result.chunks;
+      }
       if (options.omitRate && method === 'read_chunk') delete result.sample_rate;
     }
     return { ok: true, boot_id: 'b', result };
@@ -123,11 +158,18 @@ function fixture(
   );
   const run = () =>
     route(
-      { id: 1, request_id: 'request', route: 'voice', payload: { recording_id: 'recording' } },
+      {
+        id: 1,
+        request_id: 'request',
+        boot_id: 'b',
+        route: 'voice',
+        payload: { recording_id: 'recording' },
+      },
       controller.signal,
     );
   return {
     run,
+    discover: () => route.discover('b', controller.signal),
     calls,
     received,
     events,
@@ -262,4 +304,173 @@ test('the prefetched first batch survives legacy metadata fallback and can finis
       await f.close();
     }
   }
+});
+
+test('advertised compact batches preserve durable ACKs and improve delivery without changing ring capacity or loss policy', async () => {
+  const f = fixture({
+    batch: true,
+    latency: 150,
+    totalBlocks: 200,
+    offeredAhead: true,
+    ingressBatch: 5,
+  });
+  try {
+    await f.discover();
+    await f.discover();
+    const result: any = await f.run();
+    assert.equal(result.run_id, 'native-run');
+    assert.equal(f.calls.filter((c) => c.method === 'describe').length, 1);
+    assert.equal(f.calls.filter((c) => c.method === 'read_chunk').length, 0);
+    assert(f.calls.some((c) => c.method === 'read_batch' && c.args.limit === 40));
+    assert.equal(f.received.size, 200);
+    assert.equal(f.dropped, 0);
+    assert.equal(f.events.at(-1)?.read_method, 'read_batch');
+    assert.equal(f.events.at(-1)?.acknowledged_sequence, 200);
+    assert.equal(f.calls.filter((c) => c.method === 'ack').length, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test('unknown capability remains legacy and an explicit unsupported compact method falls back once', async () => {
+  for (const batch of [false, true]) {
+    const f = fixture({ batch, batchUnsupported: true });
+    try {
+      await f.discover();
+      assert(((await f.run()) as any).run_id);
+      assert.equal(f.calls.filter((c) => c.method === 'read_batch').length, batch ? 1 : 0);
+      assert(f.calls.some((c) => c.method === 'read_chunk'));
+      assert.equal(f.events.at(-1)?.read_method, 'read_chunk');
+    } finally {
+      await f.close();
+    }
+  }
+});
+
+test('compact corruption and unknown transport outcomes do not become legacy reads or acknowledgements', async () => {
+  for (const mode of ['corrupt', 'transport', 'non-durable']) {
+    const f = fixture({
+      batch: true,
+      malformedBatch: mode === 'corrupt',
+      failReadAck: mode === 'transport',
+      durable: mode !== 'non-durable',
+    });
+    try {
+      await f.discover();
+      await assert.rejects(
+        f.run(),
+        mode === 'corrupt'
+          ? /invalid_audio_batch/
+          : mode === 'transport'
+            ? /audio_device_transport/
+            : /audio_durable_receipt_required/,
+      );
+      assert.equal(f.calls.filter((c) => c.method === 'read_chunk').length, 0);
+      assert.equal(f.calls.filter((c) => c.method === 'ack').length, 0);
+      if (mode === 'corrupt') assert.equal(f.received.size, 0);
+    } finally {
+      await f.close();
+    }
+  }
+});
+
+test('a new boot invalidates batch negotiation and a late old-boot reply cannot authorize it', async () => {
+  const replies = new Map<string, (r: any) => void>(),
+    methods: string[] = [];
+  const route = voiceRoute(
+    async (path, method, args) => {
+      methods.push(method);
+      if (path === '/sys/capabilities')
+        return new Promise((resolve) => replies.set(args.expected_boot_id as string, resolve));
+      assert.equal(method, 'read_chunk');
+      return {
+        ok: true,
+        boot_id: 'new',
+        result: {
+          recording_id: 'r',
+          sample_rate: 16000,
+          recording: false,
+          chunks: [],
+          produced_samples: '0',
+          capture_failed: false,
+          storage_pending: false,
+        },
+      };
+    },
+    async (_id, action) => {
+      if (action === '') throw Error('audio_not_found');
+      return {};
+    },
+  );
+  const controller = new AbortController();
+  const older = route.discover('old', controller.signal),
+    newer = route.discover('new', controller.signal);
+  replies.get('new')!({ ok: true, boot_id: 'new', result: {} });
+  await newer;
+  replies.get('old')!({
+    ok: true,
+    boot_id: 'old',
+    result: {
+      batch_read: {
+        method: 'read_batch',
+        maximum_chunks: 40,
+        format: 'wishos-audio-batch/1',
+        acknowledgement_cursor: 'after_sequence',
+      },
+    },
+  });
+  await older;
+  await route.admit!(
+    { id: 1, boot_id: 'new', request_id: 'new:1', route: 'voice', payload: { recording_id: 'r' } },
+    controller.signal,
+  );
+  assert.deepEqual(methods, ['describe', 'describe', 'read_chunk']);
+});
+
+test('unrecognized batch declarations and transient capability failures do not authorize the compact method', async () => {
+  let attempts = 0,
+    mode = 'failed';
+  const methods: string[] = [];
+  const route = voiceRoute(
+    async (path, method) => {
+      methods.push(method);
+      if (path === '/sys/capabilities') {
+        attempts++;
+        return mode === 'failed'
+          ? { ok: false, boot_id: 'b', error: 'resource_busy', result: {} }
+          : {
+              ok: true,
+              boot_id: 'b',
+              result: {
+                batch_read: {
+                  method: 'read_batch',
+                  maximum_chunks: 40,
+                  format: 'future-audio-batch/2',
+                  acknowledgement_cursor: 'after_sequence',
+                },
+              },
+            };
+      }
+      return {
+        ok: true,
+        boot_id: 'b',
+        result: { sample_rate: 16000, chunks: [], recording: false },
+      };
+    },
+    async (_id, action) => {
+      if (action === '') throw Error('audio_not_found');
+      return {};
+    },
+  );
+  const signal = new AbortController().signal;
+  await route.discover('b', signal);
+  mode = 'unknown';
+  await route.discover('b', signal);
+  await route.discover('b', signal);
+  assert.equal(attempts, 2);
+  await route.admit!(
+    { id: 1, request_id: 'b:1', boot_id: 'b', route: 'voice', payload: { recording_id: 'r' } },
+    signal,
+  );
+  assert.equal(methods.at(-1), 'read_chunk');
 });

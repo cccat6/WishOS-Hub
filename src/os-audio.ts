@@ -32,3 +32,44 @@ export function osAudioPacket(chunk: OsAudioChunk): Buffer {
 export function decodeOsAudioChunk(chunk: OsAudioChunk): Buffer {
   return decodeVoicePacket(osAudioPacket(chunk));
 }
+/** WAB1 contains the original independently decodable packets, not one long codec stream. */
+export function unpackOsAudioBatch(encoded: string, maximumChunks: number): OsAudioChunk[] {
+  const bytes = Buffer.from(encoded, 'base64');
+  if (
+    bytes.toString('base64') !== encoded ||
+    bytes.length < 6 ||
+    bytes.toString('latin1', 0, 4) !== 'WAB1'
+  )
+    throw Error('invalid_audio_batch');
+  const count = bytes.readUInt16LE(4);
+  if (count > maximumChunks || count > Math.floor((bytes.length - 6) / 22))
+    throw Error('invalid_audio_batch_count');
+  const chunks: OsAudioChunk[] = [];
+  let offset = 6;
+  for (let n = 0; n < count; n++) {
+    if (offset + 10 > bytes.length) throw Error('invalid_audio_batch_record');
+    const start = bytes.readBigUInt64LE(offset),
+      size = bytes.readUInt16LE(offset + 8);
+    offset += 10;
+    if (size < 12 || offset + size > bytes.length) throw Error('invalid_audio_batch_packet');
+    const packet = bytes.subarray(offset, offset + size);
+    const chunk = {
+      sequence: packet.readUInt32LE(1),
+      samples: packet.readUInt16LE(9),
+      sample_start: start.toString(),
+      adpcm_b64: packet.toString('base64'),
+    };
+    osAudioPacket(chunk);
+    const prior = chunks.at(-1);
+    if (
+      prior &&
+      (chunk.sequence <= prior.sequence ||
+        start < BigInt(prior.sample_start) + BigInt(prior.samples))
+    )
+      throw Error('invalid_audio_batch_order');
+    chunks.push(chunk);
+    offset += size;
+  }
+  if (offset !== bytes.length) throw Error('invalid_audio_batch_trailing');
+  return chunks;
+}
