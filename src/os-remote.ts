@@ -19,11 +19,14 @@ export type RemoteHandler = ((
   /** Only adapters with an upstream request-id guarantee may opt into replay. */
   replaySafe?: boolean;
 };
+/** Host dispatch hint only; never serialized into device resource arguments. */
+export type RpcScheduling = { priority: 'background' };
 export interface DeviceRpc {
   (
     path: string,
     method: string,
     args: Record<string, unknown>,
+    scheduling?: RpcScheduling,
   ): Promise<{ boot_id: string; ok: boolean; error?: string; result: any }>;
 }
 export class RetryableRemoteError extends Error {}
@@ -155,7 +158,7 @@ export class OsRemoteBridge {
       // fetching every running request's payload plus a trailing empty peek.
       // Probe only once per boot; older adapters retain the original scan.
       if (this.listing !== false && [...this.tasks.values()].some((t) => t.state !== 'ready')) {
-        const status = await this.rpc('/services/remote', 'read', {});
+        const status = await this.rpc('/services/remote', 'read', {}, { priority: 'background' });
         if (this.closed || signal.aborted) return;
         observeBoot(status.boot_id);
         if (
@@ -198,7 +201,12 @@ export class OsRemoteBridge {
         !listed ||
         (this.tasks.size < this.capacity && [...listed].some((id) => !this.tasks.has(id)));
       for (let page = 0; discover && page < this.capacity + 1; page++) {
-        const peek = await this.rpc('/services/remote', 'peek', { after_id: after });
+        const peek = await this.rpc(
+          '/services/remote',
+          'peek',
+          { after_id: after },
+          { priority: 'background' },
+        );
         if (this.closed || signal.aborted) return;
         if (!peek.ok) throw Error(peek.error ?? 'device_peek_failed');
         observeBoot(peek.boot_id);

@@ -220,3 +220,35 @@ test('Codex approval reviewer is explicit configuration and rejected for an adap
     undefined,
   );
 });
+
+test('route and boot wrappers preserve host scheduling metadata without changing device arguments', async () => {
+  const { bootRpc } = await import('../src/device-files.js');
+  const routes = new DeviceRoutes('device');
+  const seen: any[] = [];
+  routes.attach(
+    'lan',
+    async (path, method, args, scheduling) => {
+      seen.push({ path, method, args, scheduling });
+      return { boot_id: 'boot', ok: true, result: {} };
+    },
+    'boot',
+  );
+  const rpc = bootRpc(routes.rpc, 'boot');
+  await rpc('/services/remote', 'peek', { after_id: 1 }, { priority: 'background' });
+  await rpc('/services/remote', 'complete', { id: 1 });
+  assert.deepEqual(seen, [
+    {
+      path: '/services/remote',
+      method: 'peek',
+      args: { after_id: 1, expected_boot_id: 'boot' },
+      scheduling: { priority: 'background' },
+    },
+    {
+      path: '/services/remote',
+      method: 'complete',
+      args: { id: 1, expected_boot_id: 'boot' },
+      scheduling: undefined,
+    },
+  ]);
+  routes.close();
+});

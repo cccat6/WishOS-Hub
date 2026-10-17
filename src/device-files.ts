@@ -3,8 +3,13 @@ import { posix } from 'node:path';
 import type { DeviceRpc } from './os-remote.js';
 import type { BundleReader } from './bundle-files.js';
 export function bootRpc(rpc: DeviceRpc, boot?: string): DeviceRpc {
-  return async (path, method, args) => {
-    const r = await rpc(path, method, { ...args, ...(boot ? { expected_boot_id: boot } : {}) });
+  return async (path, method, args, scheduling) => {
+    const r = await rpc(
+      path,
+      method,
+      { ...args, ...(boot ? { expected_boot_id: boot } : {}) },
+      scheduling,
+    );
     if (boot && r.boot_id !== boot) throw Error('device_boot_changed');
     return r;
   };

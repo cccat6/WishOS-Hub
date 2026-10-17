@@ -49,13 +49,13 @@ export class DeviceRoutes {
   private selected() {
     return [...this.routes.entries()].sort((a, b) => a[1].priority - b[1].priority)[0];
   }
-  readonly rpc: DeviceRpc = async (path, method, args) => {
+  readonly rpc: DeviceRpc = async (path, method, args, scheduling) => {
     const entry = this.selected();
     if (!entry) throw new TransportFailure('device_disconnected', false);
     const [name, route] = entry;
     ++this.pending;
     try {
-      const response = await route.rpc(path, method, args);
+      const response = await route.rpc(path, method, args, scheduling);
       if (response.boot_id !== route.boot) throw Error('device_boot_changed');
       return response;
     } catch (error) {

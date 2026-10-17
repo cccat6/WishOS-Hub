@@ -17,6 +17,7 @@ type RpcTiming = {
   total_ms: number;
   request_bytes: number;
   response_bytes: number;
+  priority: 'foreground' | 'background';
 };
 /** A bidirectional WishOS control peer. Calls are ordered by the device event
  * loop; a disconnected or timed-out call has an unknown result, never replayed. */
@@ -39,14 +40,22 @@ export class OsRpcSocket extends EventEmitter {
       firstFrameAt?: number;
       path: string;
       method: string;
+      priority: 'foreground' | 'background';
     }
   >();
   private inFlight = 0;
   private timings: RpcTiming[] = [];
+  private pumpTask?: NodeJS.Immediate;
+  private foregroundBurst = 0;
   boot = '';
   private closed = false;
-  constructor(readonly socket: WebSocket) {
+  constructor(
+    readonly socket: WebSocket,
+    private scheduling = { maxForegroundBurst: 4 },
+  ) {
     super();
+    if (!Number.isSafeInteger(scheduling.maxForegroundBurst) || scheduling.maxForegroundBurst < 1)
+      throw Error('rpc_scheduling_policy');
     socket.on('message', (raw, binary) => {
       try {
         if (!binary) throw Error('rpc_binary_required');
@@ -109,15 +118,18 @@ export class OsRpcSocket extends EventEmitter {
       total_ms: ms(now - call.queuedAt),
       request_bytes: call.data.length,
       response_bytes: responseBytes,
+      priority: call.priority,
     });
     if (this.timings.length > 16) this.timings.shift();
     clearTimeout(call.timer);
     this.calls.delete(m.id);
     this.inFlight = 0;
     call.resolve(m);
-    this.pump();
+    // Resolve the consumer first: its durable append/next-read continuation can
+    // enqueue work before a queued discovery scan takes the next wire slot.
+    this.schedulePump();
   }
-  readonly rpc: DeviceRpc = async (path, method, args) => {
+  readonly rpc: DeviceRpc = async (path, method, args, scheduling) => {
     if (this.closed || !this.boot || this.socket.readyState !== WebSocket.OPEN)
       throw new TransportFailure('device_disconnected', false);
     if (this.calls.size >= 8) throw new TransportFailure('rpc_backpressure', false);
@@ -139,7 +151,7 @@ export class OsRpcSocket extends EventEmitter {
         if (entry.sent) {
           this.socket.terminate();
           this.close();
-        }
+        } else this.schedulePump();
       }, 10000);
       this.calls.set(id, {
         resolve,
@@ -151,15 +163,32 @@ export class OsRpcSocket extends EventEmitter {
         sentAt: 0,
         path,
         method,
+        priority: scheduling?.priority ?? 'foreground',
       });
-      this.pump();
+      if (scheduling?.priority === 'background') this.schedulePump();
+      else this.pump();
     });
   };
+  private schedulePump() {
+    if (this.closed || this.pumpTask) return;
+    this.pumpTask = setImmediate(() => {
+      this.pumpTask = undefined;
+      this.pump();
+    });
+  }
   private pump() {
     if (this.closed || this.inFlight) return;
-    const next = this.calls.entries().next();
-    if (next.done) return;
-    const [id, call] = next.value;
+    const pending = [...this.calls.entries()];
+    const foreground = pending.find(([, call]) => call.priority === 'foreground');
+    const background = pending.find(([, call]) => call.priority === 'background');
+    const next =
+      background && (!foreground || this.foregroundBurst >= this.scheduling.maxForegroundBurst)
+        ? background
+        : foreground;
+    if (!next) return;
+    const [id, call] = next;
+    this.foregroundBurst =
+      call.priority === 'foreground' && background ? this.foregroundBurst + 1 : 0;
     this.inFlight = id;
     call.sent = true;
     call.sentAt = performance.now();
@@ -183,6 +212,7 @@ export class OsRpcSocket extends EventEmitter {
   close() {
     if (this.closed) return;
     this.closed = true;
+    if (this.pumpTask) clearImmediate(this.pumpTask);
     for (const call of this.calls.values()) {
       clearTimeout(call.timer);
       call.reject(

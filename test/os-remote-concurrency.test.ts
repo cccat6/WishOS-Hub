@@ -63,24 +63,28 @@ test('independent services run concurrently; close does not publish late callbac
     { id: 2, request_id: 'two', state: 'queued', route: 'quick', payload: {} },
   ];
   const done: any[] = [];
-  const rpc: DeviceRpc = async (_p, m, a) => ({
-    boot_id: 'b',
-    ok: true,
-    result:
-      m === 'read'
-        ? {
-            pending: requests.length > 0,
-            requests: requests.map((r) => ({ id: r.id, state: 'queued' })),
-          }
-        : m === 'peek'
-          ? (requests.find((r) => r.id > Number(a.after_id ?? 0)) ?? { state: 'empty' })
-          : (done.push(a),
-            requests.splice(
-              requests.findIndex((r) => r.id === a.id),
-              1,
-            ),
-            {}),
-  });
+  const scheduling: { method: string; priority?: string }[] = [];
+  const rpc: DeviceRpc = async (_p, m, a, hint) => {
+    scheduling.push({ method: m, priority: hint?.priority });
+    return {
+      boot_id: 'b',
+      ok: true,
+      result:
+        m === 'read'
+          ? {
+              pending: requests.length > 0,
+              requests: requests.map((r) => ({ id: r.id, state: 'queued' })),
+            }
+          : m === 'peek'
+            ? (requests.find((r) => r.id > Number(a.after_id ?? 0)) ?? { state: 'empty' })
+            : (done.push(a),
+              requests.splice(
+                requests.findIndex((r) => r.id === a.id),
+                1,
+              ),
+              {}),
+    };
+  };
   const bridge = new OsRemoteBridge(
     rpc,
     {
@@ -98,6 +102,18 @@ test('independent services run concurrently; close does not publish late callbac
   await bridge.poll(new AbortController().signal);
   assert.equal(done.length, 1);
   assert.equal(done[0].id, 2);
+  assert(scheduling.some((call) => call.method === 'read'));
+  assert(scheduling.some((call) => call.method === 'peek'));
+  assert(
+    scheduling
+      .filter((call) => ['read', 'peek'].includes(call.method))
+      .every((call) => call.priority === 'background'),
+  );
+  assert(
+    scheduling
+      .filter((call) => call.method === 'complete')
+      .every((call) => call.priority === undefined),
+  );
   bridge.close();
   db.close();
   finish();

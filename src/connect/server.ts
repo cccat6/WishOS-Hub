@@ -311,9 +311,9 @@ export class ConnectorServer {
       for (const d of next.devices) {
         const routes = new DeviceRoutes(d.id);
         this.routes.set(d.id, routes);
-        this.hub.bindDeviceRpc(d.id, async (path, method, args) => {
+        this.hub.bindDeviceRpc(d.id, async (path, method, args, scheduling) => {
           if (this.applying || this.changing) throw Error('connector_configuration_pending');
-          return routes.rpc(path, method, args);
+          return routes.rpc(path, method, args, scheduling);
         });
       }
       this.startRelay();

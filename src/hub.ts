@@ -292,10 +292,10 @@ export class Hub {
       typeof args.expected_boot_id === 'string'
         ? args.expected_boot_id
         : this.osPeers.get(id)?.boot;
-    const rpc: DeviceRpc = (p, m, a) => {
+    const rpc: DeviceRpc = (p, m, a, scheduling) => {
       const peer = this.osPeers.get(id);
       if (!peer) throw new TransportFailure('device_disconnected', false);
-      return peer.rpc(p, m, a);
+      return peer.rpc(p, m, a, scheduling);
     };
     const recovery = this.deviceRecovery(id, expected);
     return guardedInvocation(
@@ -348,9 +348,9 @@ export class Hub {
       clearInterval(old.timer);
       old.socket?.socket.close();
     }
-    const bound: DeviceRpc = async (p, m, a) => {
+    const bound: DeviceRpc = async (p, m, a, scheduling) => {
       try {
-        const result = await rpc(p, m, a);
+        const result = await rpc(p, m, a, scheduling);
         const current = this.osPeers.get(d.id);
         if (current?.rpc === bound) {
           current.online = true;
