@@ -99,3 +99,44 @@ test('a full compact batch fits the unchanged control envelope while retaining e
   b[0] |= 128;
   assert.throws(() => unpackOsAudioBatch(b.toString('base64'), 32), /invalid_audio_batch/);
 });
+
+test('compressed batch admission validates state without allocating throwaway PCM; decoding stays at its consumer boundary', async (t) => {
+  const { osAudioPacket } = await import('../src/os-audio.js');
+  const { OsAudioIngress } = await import('../src/os-audio-ingress.js');
+  const { DatabaseSync } = await import('node:sqlite');
+  const chunks = Array.from({ length: 24 }, (_, i) => ({
+    sequence: i,
+    samples: 160,
+    sample_start: String(i * 160),
+    adpcm_b64: packet(i).toString('base64'),
+  }));
+  const encoded = packBatch(chunks),
+    db = new DatabaseSync(':memory:');
+  const ingress = new OsAudioIngress(db, async () => ({}));
+  ingress.begin('d', 'r', { sample_rate: 16000 });
+  const allocate = Buffer.alloc;
+  let pcmAllocations = 0;
+  const spy = t.mock.method(Buffer, 'alloc', (...args: Parameters<typeof Buffer.alloc>) => {
+    if (args[0] === chunks[0].samples * 2) pcmAllocations++;
+    return allocate(...args);
+  });
+  try {
+    const decodedContainer = unpackOsAudioBatch(encoded, 30);
+    const stored = ingress.append('d', 'r', decodedContainer);
+    assert.equal(stored.blocks, 24);
+    assert.equal(stored.durable, true);
+    assert.equal(pcmAllocations, 0);
+    assert.equal(decodeOsAudioChunk(decodedContainer[0]).length, chunks[0].samples * 2);
+    assert.equal(pcmAllocations, 1);
+    const malformed = Buffer.from(chunks[0].adpcm_b64, 'base64');
+    malformed[7] = 89;
+    const invalid = { ...chunks[0], adpcm_b64: malformed.toString('base64') };
+    assert.throws(() => osAudioPacket(invalid), /ADPCM/);
+    assert.throws(() => ingress.append('d', 'r', [invalid]), /invalid_audio_packet/);
+    assert.equal(ingress.status('d', 'r').blocks, 24);
+  } finally {
+    spy.mock.restore();
+    await ingress.close();
+    db.close();
+  }
+});

@@ -1,4 +1,4 @@
-import { decodeVoicePacket } from './voice-codec.js';
+import { decodeVoicePacket, validateVoicePacket } from './voice-codec.js';
 export type OsAudioChunk = {
   sequence: number;
   samples: number;
@@ -26,7 +26,7 @@ export function osAudioPacket(chunk: OsAudioChunk): Buffer {
     packet.readUInt16LE(9) !== chunk.samples
   )
     throw Error('invalid_audio_packet');
-  decodeVoicePacket(packet);
+  validateVoicePacket(packet);
   return packet;
 }
 export function decodeOsAudioChunk(chunk: OsAudioChunk): Buffer {
