@@ -355,6 +355,7 @@ export class ConnectorServer {
             ...this.config.resources,
             imagePreparation: true,
             packagePreflight: true,
+            jobs: this.jobs!.describe(),
             formats: ['png', 'rgb8', 'indexed8'],
           },
           session_owner: 'selected-runtime',

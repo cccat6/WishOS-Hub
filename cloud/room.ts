@@ -436,6 +436,7 @@ export class WishosRoom extends DurableObject<WishosCloudEnv> {
           maxStoredBytes: this.artifacts.maxRoom,
           ttlMs: 3600000,
           packagePreflight: true,
+          jobs: this.jobs.describe(),
           staging: true,
           delivery: true,
         },

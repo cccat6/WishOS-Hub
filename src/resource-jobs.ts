@@ -29,6 +29,9 @@ export class ResourceJobs {
   get activeCount() {
     return this.active.size;
   }
+  describe() {
+    return { concurrency: this.limits.concurrency, timeout_ms: this.limits.timeoutMs };
+  }
   read(id: string) {
     const value = this.store.read(id);
     if (!value) throw Error('resource_job_not_found');

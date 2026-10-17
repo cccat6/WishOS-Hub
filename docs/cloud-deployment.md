@@ -45,6 +45,13 @@ wire device. It validates real HTTPS, OAuth metadata, authorization scope, devic
 WS and MCP RPC, resource staging and mutation identity. It does not prove a
 physical panel refreshed or that a vendor account authorized native ingress.
 
+The smoke observes resource jobs using the service's advertised
+resources.jobs.timeout_ms. WISHOS_CHECK_JOB_TIMEOUT_MS is an explicit client
+override; it does not change server execution limits. Older deployments without
+that declaration retain the legacy60-second observation default. Failures report
+the last job and bounded transfer progress before deleting the synthetic
+installation. In-progress, failed, unknown and physically completed are distinct.
+
 Cloud resource receipts survive process restart. Unfinished mutations are marked
 unknown and are never replayed automatically. Host resource jobs have equivalent
 receipts and cancellation; repeated explicit resource IDs reconcile the original

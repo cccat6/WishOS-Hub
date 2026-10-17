@@ -10,6 +10,7 @@ export async function preflightUi(
   doc: any,
   options: {
     capabilities: any;
+    targetBound?: boolean;
     reference: (file: string, path: string) => Promise<string>;
     document: (file: string) => Promise<any>;
     fileBytes: (file: string) => number | undefined;
@@ -20,7 +21,20 @@ export async function preflightUi(
     ) => Promise<number[]>;
   },
 ) {
-  const caps = options.capabilities;
+  // Offline admission checks the known document grammar, not an imagined legacy
+  // adapter. Target admission still uses only the target's advertised extensions.
+  const caps =
+    options.targetBound === false
+      ? {
+          nodes: 'viewScreen,container,label,button,image,qrcode',
+          styles: builtInStyles + ',lineHeight',
+          label_metrics: 'line,ink',
+          label_overflow: 'wrap,clip,ellipsis',
+          image_fit: 'none,contain,cover',
+          flex_alignment: 'start,center,end',
+          ...options.capabilities,
+        }
+      : options.capabilities;
   const choice = (
     value: unknown,
     capability: string,

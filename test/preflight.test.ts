@@ -83,6 +83,46 @@ function device() {
 async function stage(source: ArtifactStore, path: string, text: string) {
   return { path, artifact_id: (await source.stage({ text })).id };
 }
+test('offline UI admission checks document vocabulary without inventing a legacy target', async () => {
+  const f = await fixture();
+  try {
+    const node = {
+      type: 'viewScreen',
+      layout: { type: 'flex', flexFlow: 'row', mainAlign: 'center', crossAlign: 'end' },
+      children: [
+        {
+          type: 'label',
+          style: { lineHeight: 24 },
+          labelProps: { text: '正文', metrics: 'ink', longMode: 'ellipsis' },
+        },
+        { type: 'qrcode', qrcodeProps: { text: 'https://wishos.dev' } },
+      ],
+    };
+    const check = async () =>
+      preflightBundle(
+        f.source,
+        [
+          await stage(
+            f.source,
+            'ui.json',
+            JSON.stringify({
+              version: '0.1.1',
+              assets: [node],
+            }),
+          ),
+        ],
+        { signal: signal() },
+      );
+    const report = await check();
+    assert(report.ok);
+    assert.equal(report.target_boot_id, undefined);
+    assert(report.warnings.some((w) => w.code === 'ui_font_coverage_unverified'));
+    node.layout.mainAlign = 'space-around';
+    await assert.rejects(check(), /ui_flex_alignment/);
+  } finally {
+    await f.close();
+  }
+});
 async function packageFiles(
   source: ArtifactStore,
   lua = 'return {on_start=function() end}',

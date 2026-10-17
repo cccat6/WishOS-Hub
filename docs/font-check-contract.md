@@ -42,7 +42,10 @@ resources in that target environment without presenting. Native install/activati
 and matching view/revision presentation completion still require separate receipts.
 Font/default/configuration/media changes invalidate prior coverage evidence; the
 Host does not keep a cross-request positive glyph cache. Preflight reports identify
-the updated algorithm as validator_version3, while historical receipts retain their
+the glyph-check algorithm as validator_version3. Validator_version4 additionally
+separates offline document grammar from target capability support; offline layout
+does not invent a legacy adapter that only supports start alignment. Historical
+receipts retain their
 original validator version rather than becoming current validation evidence.
 
 ## Acceptance boundary

@@ -800,6 +800,7 @@ export class Hub {
           staging: true,
           delivery: true,
           packagePreflight: true,
+          jobs: this.resourceJobs.describe(),
         },
         session_owner: 'selected-runtime',
         direct_model_api: false,

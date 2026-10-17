@@ -28,6 +28,9 @@ test('resource jobs retain identity, bound concurrency and distinguish interrupt
     return new Promise((r) => (finish = r));
   };
   try {
+    const metadata = jobs.describe();
+    assert.equal(metadata.concurrency, 1);
+    metadata.concurrency = 2;
     const a = jobs.submit('same', 'fingerprint', 'stage', execute);
     assert.equal(a.state, 'running');
     assert.equal(jobs.submit('same', 'fingerprint', 'stage', execute).id, a.id);

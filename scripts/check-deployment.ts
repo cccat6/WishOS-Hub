@@ -28,6 +28,13 @@ const device = new WireDevice(),
   transfer = new TransferFixture(1024);
 let client: Client | undefined;
 let report: Record<string, unknown> | undefined;
+let diagnosticNative: PackageDevice | undefined;
+let failure: unknown;
+let lastJob: Record<string, unknown> | undefined;
+const progress: Record<string, unknown>[] = [];
+const started = Date.now();
+let jobTimeoutMs = 60000;
+let jobTimeoutSource = 'legacy-client-default';
 try {
   const install = await api('/v1/installations', {
     id,
@@ -60,6 +67,18 @@ try {
     assert(!r.isError, JSON.stringify(r));
     return JSON.parse(r.content[0].text);
   };
+  const service = await call('server_capabilities', {});
+  const configuredTimeout = process.env.WISHOS_CHECK_JOB_TIMEOUT_MS;
+  const advertisedTimeout = service.resources?.jobs?.timeout_ms;
+  if (configuredTimeout !== undefined || advertisedTimeout !== undefined) {
+    jobTimeoutMs = Number(configuredTimeout ?? advertisedTimeout);
+    assert(
+      Number.isSafeInteger(jobTimeoutMs) && jobTimeoutMs > 0,
+      'invalid job observation deadline',
+    );
+    jobTimeoutSource =
+      configuredTimeout !== undefined ? 'explicit-client-override' : 'server-contract';
+  }
   const relay = new URL(install.relay_origin);
   relay.protocol = relay.protocol === 'https:' ? 'wss:' : 'ws:';
   relay.pathname = '/os/device';
@@ -102,10 +121,11 @@ try {
     const j = await call('read_resource_job', { id: delivery.id });
     if (['failed', 'unknown'].includes(j.state)) throw Error(JSON.stringify(j));
     return j.state === 'completed';
-  }, 60000);
+  }, jobTimeoutMs);
   assert(transfer.committed);
   assert.equal(createHash('sha256').update(transfer.received).digest('hex'), asset.sha256);
   const native = new PackageDevice();
+  diagnosticNative = native;
   native.boot = device.boot;
   native.paginatedMounts = true;
   native.descriptions['/sys/apps'].install_providers = ['card'];
@@ -126,13 +146,97 @@ try {
   const finish = async (id: string) =>
     eventually(async () => {
       const j = await call('read_resource_job', { id });
+      lastJob = { id, state: j.state, error: j.error, result_state: j.result?.state };
+      const t = native?.transfer;
+      const snapshot = {
+        id,
+        state: j.state,
+        transfer_state: t?.state,
+        files_complete: t?.files_complete,
+        current_file: t?.current?.path,
+        file_offset: t?.current?.bytes.length,
+      };
+      if (JSON.stringify(progress.at(-1)?.snapshot) !== JSON.stringify(snapshot)) {
+        progress.push({ elapsed_ms: Date.now() - started, snapshot });
+        if (progress.length > 128) progress.shift();
+      }
       if (['failed', 'unknown'].includes(j.state)) throw Error(JSON.stringify(j));
       return j.state === 'completed' ? j.result : false;
-    }, 60000);
+    }, jobTimeoutMs);
   const stage = async (path: string, text: string) => ({
     path,
     artifact_id: (await finish((await call('stage_resource', { text })).id)).id,
   });
+  const offlineUi = await stage(
+    'offline-ui.json',
+    JSON.stringify({
+      version: '0.1.1',
+      assets: [
+        {
+          type: 'viewScreen',
+          layout: { type: 'flex', mainAlign: 'center', crossAlign: 'end' },
+          children: [{ type: 'label', labelProps: { text: 'Offline grammar' } }],
+        },
+      ],
+    }),
+  );
+  const offlineChecked = await finish((await call('preflight_bundle', { files: [offlineUi] })).id);
+  assert.equal(offlineChecked.validator_version, '4');
+  assert.equal(offlineChecked.target_boot_id, undefined);
+  const fonts = [{ id: 'system', scalable: true, minimum_size: 8, maximum_size: 96 }];
+  const uiCaps = {
+    methods: 'read,capabilities,fonts,font_check',
+    read_methods: 'read,capabilities,fonts,font_check',
+    format: 'brookesia-json-ui-0.1.x-subset',
+    nodes: 'viewScreen,label',
+    styles: 'font,fontSize',
+    fonts,
+    max_nodes: 32,
+    max_depth: 8,
+    max_document_bytes: 16384,
+    font_check: { method: 'font_check', max_codepoints: 2 },
+  };
+  device.descriptions['/sys/ui'] = uiCaps;
+  device.resourceHandler = (c) => {
+    if (c.path !== '/sys/ui') return native.call(c);
+    if (c.method === 'capabilities') return uiCaps;
+    if (c.method === 'fonts') return { fonts };
+    assert.equal(c.method, 'font_check');
+    assert(c.args.codepoints.length <= uiCaps.font_check.max_codepoints);
+    const missing = c.args.codepoints.filter((cp: number) => cp === 0x2212);
+    return { missing_codepoints: missing, covered: missing.length === 0 };
+  };
+  for (const [text, valid] of [
+    ['−5分钟', false],
+    ['-5分钟', true],
+  ] as const) {
+    const file = await stage(
+      'ui.json',
+      JSON.stringify({
+        version: '0.1.1',
+        assets: [
+          {
+            type: 'viewScreen',
+            style: { fontSize: 19 },
+            children: [{ type: 'label', labelProps: { text } }],
+          },
+        ],
+      }),
+    );
+    const submitted = await call('preflight_bundle', {
+      files: [file],
+      device_id: 'test-device',
+      expected_boot_id: device.boot,
+    });
+    if (valid) assert.equal((await finish(submitted.id)).validator_version, '4');
+    else {
+      const rejected = await eventually(async () => {
+        const job = await call('read_resource_job', { id: submitted.id });
+        return job.state === 'failed' ? job : false;
+      }, jobTimeoutMs);
+      assert.equal(rejected.diagnostics[0].code, 'ui_font_missing_glyph');
+    }
+  }
   const index = await call('get_device_components', {
     device_id: 'test-device',
     expected_boot_id: device.boot,
@@ -179,7 +283,7 @@ try {
       const job = await call('read_resource_job', { id });
       assert.notEqual(job.state, 'unknown', JSON.stringify(job));
       return job.state === 'failed' ? job : false;
-    }, 60000);
+    }, jobTimeoutMs);
   native.descriptions['/sys/apps'].install_providers = [];
   const emptyPolicy = await call('preflight_bundle', {
     device_id: 'test-device',
@@ -323,6 +427,8 @@ try {
       'boot-scoped-components',
       'actual-lua-wasm-profile',
       'bad-code-no-device-write',
+      'offline-ui-grammar-without-target-assumptions',
+      'live-cloud-declared-font-check',
       'package-native-ticket-install-activate',
       'whole-file-update-local-copy',
       'explicit-stop-after-preflight-before-preparation',
@@ -335,6 +441,39 @@ try {
     physical_device: false,
     vendor_account: false,
     at: new Date().toISOString(),
+    job_timeout_ms: jobTimeoutMs,
+    job_timeout_source: jobTimeoutSource,
+  };
+} catch (error) {
+  failure = error;
+  const native = diagnosticNative;
+  report = {
+    ok: false,
+    origin: base,
+    physical_device: false,
+    vendor_account: false,
+    error: error instanceof Error ? error.message : String(error),
+    last_job: lastJob,
+    elapsed_ms: Date.now() - started,
+    job_timeout_ms: jobTimeoutMs,
+    job_timeout_source: jobTimeoutSource,
+    progress,
+    wire_method_counts: Object.fromEntries(
+      [...new Set(device.calls.map((c) => c.path + ':' + c.method))].map((key) => [
+        key,
+        device.calls.filter((c) => c.path + ':' + c.method === key).length,
+      ]),
+    ),
+    native_state: native
+      ? {
+          revision: native.revision,
+          active: native.active,
+          transfer_state: native.transfer?.state,
+          files_complete: native.transfer?.files_complete,
+          current_file: native.transfer?.current?.path,
+          file_offset: native.transfer?.current?.bytes.length,
+        }
+      : undefined,
   };
 } finally {
   await client?.close();
@@ -350,3 +489,4 @@ try {
 }
 
 console.log(JSON.stringify({ ...report, cleanup: true }, null, 2));
+if (failure) throw failure;

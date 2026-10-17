@@ -536,6 +536,7 @@ async function checkResolved(
     if (!fontCoverage) warnings.push({ code: 'ui_font_coverage_unverified', file });
     const uiValidation = await preflightUi(file, doc, {
       capabilities: uiCaps,
+      targetBound: !!options.rpc,
       fontCoverage,
       reference: (file, path) => reference(file, path, scope),
       document: async (path) => {
@@ -560,7 +561,7 @@ async function checkResolved(
   return {
     format: 'wishos-preflight/1',
     ok: true,
-    validator_version: '3',
+    validator_version: '4',
     content_sha256: contentIdentity(files),
     bytes: String(files.reduce((n, f) => n + f.size, 0)),
     files: files.map((f) => ({ path: f.destination, bytes: String(f.size), sha256: f.sha256 })),
