@@ -4,7 +4,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { Hub } from '../src/hub.js';
 import { Store } from '../src/store.js';
-import { MockAdapter } from '../src/adapters/mock.js';
+import { MockAdapter } from './helpers/mock-adapter.js';
 const text = (reply: any) => JSON.parse(reply.content[0].text);
 test('HTTP MCP: tools, guidance, offline errors and isolated clients', async () => {
   const store = new Store(':memory:');

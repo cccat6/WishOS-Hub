@@ -120,7 +120,7 @@ The firmware-facing confirmed configuration is:
       }, persist:true
     }
 
-Ports/hostnames are profile data, not OS constants. Root/terminal owner controls
+Ports/hostnames are profile data, not OS constants. The terminal service owns
 final schema and routing behavior; server task must not edit firmware itself.
 Relays/receivers authenticate pairing scope; cloud never accepts a model-provider
 key field. HTTP MCP payloads terminate at the MCP service, so claim no transcript
@@ -152,26 +152,17 @@ and the parent's confirmed wishos-result/2 interface before publishing integrati
   policies. Reconcile interrupted transfers and terminal effects using existing
   request IDs and digests. No duplicate installation on LAN/relay handover.
 
-## Deliverables for the forked server task
+## Maintenance scope
 
-1. Independent private GitHub repo with MIT license and preserved Hub history.
-2. Rename/refactor package entrypoints around WishOS; pin dependencies and maintain
-   one standard MCP tool/resource contract across supported client transports.
-3. User connector, browser setup wizard, client config exports and session-capability
-   checks. A missing executable or unapproved vendor OAuth app is a clear external
-   prerequisite, not a simulated supported mode.
-4. Appropriate documented adapters for Codex, Claude Code, DSH, Cursor, WorkBuddy,
-   OpenClaw and Hermes; generic ChatGPT remote-MCP support with its reverse-trigger
-   limitation. Keep unverified real-provider status distinct from fixtures.
-5. Hosted MCP/pairing/relay deployment under mcp.wishos.dev and relay.wishos.dev,
-   tenant/scoped authorization, bounded buffers, no model key intake or transcript
-   persistence. Reuse the existing Cloudflare account; do not alter telemetry.
-6. Reproducible self-host release/launchers, no Docker Compose dependency. Start a
-   local web wizard; a full Electron app is not needed for the first release.
-7. Tests for protocol versions, trigger receipts, credentials staying local,
-   pairing isolation, LAN/relay handover, uncertain mutation reconciliation,
-   offline/expired hosts, multi-file delivery and cleanup. Release smoke tests on
-   supported platforms. No claim of live vendor acceptance without credentials.
+The MIT Hub repository contains MCP, user-host connectors, relay, resource processing
+and deployable packaging. The terminal repository supplies the portable OS and
+hardware implementations. Interface changes use versioned contracts and behavior
+tests, while actual provider/device availability has separate live acceptance.
+
+Browser setup and launchers support user-host deployment. Session ingress, native
+speech, tool capability and configured credentials remain distinct. Release assets
+come from a verified source/build set and a public product manifest; private
+operational evidence stays outside source, tests and distribution packages.
 
 ## Primary sources read
 

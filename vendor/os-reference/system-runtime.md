@@ -1,6 +1,6 @@
 # WishOS 运行时与实现边界
 
-WishOS 提供执行、资源调用、配置、事件、完成回调、文件、呈现、应用生命周期和系统服务协调。底层使用 FreeRTOS；没有另建一个 RTOS。接口详情由设备 `/sys/contract`、`/sys/capabilities` 和各资源描述提供，Agent 从[Skill](../skills/agentic-notes-hardware/SKILL.md)按需读取说明。
+WishOS 提供执行、资源调用、配置、事件、完成回调、文件、呈现、应用生命周期和系统服务协调。底层使用 FreeRTOS。接口详情由设备 `/sys/contract`、`/sys/capabilities` 和各资源描述提供，Agent 从[Skill](../skills/agentic-notes-hardware/SKILL.md)按需读取说明。
 
 ## 分层与可更改范围
 
@@ -25,11 +25,21 @@ WishOS 提供执行、资源调用、配置、事件、完成回调、文件、�
 
 `/system` 仅保存不可变的设备发现元数据、默认配置、启动目录初始引用、标准 Lua 库和小型恢复应用；这些元数据不重复放入可写文件卷制造无效副本。恢复应用使用相同运行时和公共调用；它不是第二套特权 UI。已挂载卷上缺失的浏览器文件返回缺失，不悄悄覆盖用户修改。
 
-内部 `flash` 卷可读写，但用户应用安装卷由设备包 `application_providers` 给出默认值，并可通过系统 `/sys/apps configure {install_providers:[...]}` 修改；它是用户策略，不是硬件禁令。修改须保留已安装应用所需的卷，否则整体拒绝。当前 4 MiB E6 设备保留 Flash 给系统套装，用户应用装 SD；较大 Flash 或无 SD 的设备可允许 Flash 安装，并配置下载配额。可用容量、分区、RAM/PSRAM 文件卷均可发现；容量读取不创建文件或重建索引。`/fs mounts` 和 `/sys/storage read` 的列表按游标分页，调用方必须遍历 `more/next_cursor`。
+内部 `flash` 卷可读写，但用户应用安装卷由设备包 `application_providers` 给出默认值，并可通过系统 `/sys/apps configure {install_providers:[...]}` 修改；它是用户策略，不是硬件禁令。修改须保留已安装应用所需的卷，否则整体拒绝。设备包按容量选择SD或内部Flash作为应用安装位置，并配置下载配额。可用容量、分区、RAM/PSRAM 文件卷均可发现；容量读取不创建文件或重建索引。`/fs mounts` 和 `/sys/storage read` 的列表按游标分页，调用方必须遍历 `more/next_cursor`。
 
 ## 应用、更新与恢复入口
 
 多应用保存在文件目录中，只有前台应用装入一个 VM；独立计算使用隔离工作器。Launcher 和语音入口是普通已安装应用引用。`/sys/apps` 管理安装、校验、选择、启动、退出与 Home；`/sys/navigation` 的独立输入路径不依赖前台消费事件，避免应用把用户困住。具体手势由设备配置定义。
+
+受保护的语音入口先路由到显式登记的当前应用。普通应用通过
+`/system/lib/ai.lua` 的 `voice_input(begin_input,end_input)` 登记开始／松手回调，
+也可直接调用 `/sys/apps voice_input {enabled:true}` 并监听定向事件。
+登记随 VM 实例释放，长按开始与松手使用同一 `request_id` 和目标实例。
+当前应用未登记或已故障时，系统打开配置中的普通语音应用，保留原应用／页面上下文。
+默认语音应用通过相同接口接收输入；加载完成前松手会取消待开始的录音意图。
+录音参数、会话选择、转写后的应用动作与反馈由普通应用和上位服务通过公开接口编排。
+上一页、下一页等含义由目标应用声明；启动应用、更新应用等系统动作走各自系统接口。
+单键设备可配置三击 Home 与长按语音，系统恢复手势和应用单击／双击分别识别。
 
 应用 `source`、`version`、`icon` 是描述元数据；`icon` 路径相对描述文件解析；图标是否显示、如何绘制由 Launcher 决定。S3 默认 Launcher 读取应用自己的图标，缺省使用通用应用图标。多版本使用不同目录，目录清单和应用目录索引分别管理；选择新版本只切换索引，不自动抹去旧目录。用户 Launcher 不可用时回到出厂引用；出厂文件损坏时尝试一次恢复应用，仍失败则保持可访问的控制接口，不无限重启 VM。
 
@@ -42,6 +52,14 @@ WishOS 提供执行、资源调用、配置、事件、完成回调、文件、�
 Lua 5.4.8 的 `notes.call` 调用公开资源，`notes.on` 处理事件，`notes.request` 关联异步完成并自动释放回执。标准模块 `/system/lib/input.lua`、`/system/lib/ai.lua` 随运行时提供。小型 JSON 可以本地解析，大结果通过文件/分块接口访问。
 
 系统事件循环执行应用回调与资源调度；阻塞 SDK 初始化、网络和媒体操作进入原生工作器。VM 内存、指令和系统调用预算分别控制；普通应用无法提高原生任务优先级。内存来源可选 internal/external/auto，预算是配置策略，不代表硬件固定只有某个应用容量。
+
+配置按字段继承：驱动声明的初值、设备包默认值、用户系统设置、允许的应用范围覆盖依次生效。
+保存和恢复的是覆盖项；只保存字号时，字体继续继承系统默认。应用页面的 `style` 再对局部文字
+设置字体、字号等属性；省略的文字属性继承父节点，最终使用系统默认字体。`style.font:"system"`
+可显式选择系统字体。普通应用启动读取配置，用户主动设置时才提交变更。
+`/sys/config` 的 `changes` 每项可提供 `settings` 设置值，或 `inherit:["字段名",...]` 移除该范围的
+覆盖值。选择“默认”会恢复继承，后续系统默认变化仍可生效；它与显式空字符串或 nullable 值
+分别处理。同一字段同时设置和恢复继承时整次拒绝，持久化、校验和版本守卫沿用同一配置入口。
 
 异步操作保持 operation/session 身份；接收、排队、传输、应用执行及持久完成分别报告。完成记录独立于普通易失事件环。应用退出释放其服务、文件、回调和 VM 资源；已提交的物理操作先经过安全结束边界再释放硬件。
 
@@ -82,3 +100,51 @@ Wi-Fi 多记忆网络、优先级、手动意图、自动重连和切换是系�
 `tools/test_wishos.sh` 运行公共主机行为回归；`tools/build_wishos.py --board ...` 构建选定设备；`tools/test_native_drivers.py --target ...` 单独编译原生适配器。当前 C3 开发板、C6 产品组合、S3 SDK 验证包使用同一可移植运行时，S3 包声明双核与 PSRAM 配置；SDK 验证包不等于完成某台小智设备移植。
 
 主机回归、目标构建、C3 真机通信和完整产品硬件/光学验收必须分别报告。参考硬件的驱动契约和编译测试不代表每种屏幕、音频电路或功耗状态都已实测。最近证据与待验证项见[联合验收](recovery.md)，不将旧版本记录视为当前版本验证。
+
+### 只读字体覆盖查询
+
+`/sys/ui.describe.font_check` 声明查询方法和 `max_codepoints`。调用
+`font_check {font?:"system",size?:24,codepoints:[45,8722,40856]}`，返回
+`resolved`（实际字体来源、字号、文件/provider及内容版本）和
+`missing_codepoints`；`covered` 表示本批是否全部受支持。省略字体继承当前系统配置；
+可显式选择 `builtin`、当前调用者可见的注册名或绝对TTF路径。按声明的批量上限拆请求。
+
+查询沿实际渲染器的字体选择和glyph lookup语义工作，包含布局换行及tinyTTF零宽字符。
+它不初始化LVGL、不注册字体、不改变当前UI、不写媒体；临时文件租约和有界解析空间在
+返回时释放。文件不可用、损坏、不支持的cmap格式及内存不足各自返回错误，不能当作缺字。
+覆盖查询只验证指定码点的映射；完整包仍须经原生validate进行资源与实际渲染准入。
+
+### 远程任务的公开执行进度
+
+远程服务的进度和最终结果分别处理。`/services/remote` 的描述声明
+`progress.format = wishos-progress/1` 后，连接器可以通过 `progress` 提交
+`{id, request_id, sequence, progress:{format, stage, source, text?}}`。
+`stage` 为 `received/receiving/transcribing/executing/preparing/transferring`，
+`source` 为 `hub/harness`。公开摘要按描述限长与合并；进度更新保留请求的原期限。
+
+原任务身份、递增序列、幂等重发和最终状态由系统校验。进度不执行结果动作，也不表示
+安装、激活或显示完成。`read {id, include_payload:false}` 返回有界状态及最后的
+`progress/progress_sequence/progress_at_ms`；大请求正文仍通过原来的peek取得。
+事件只发布小通知，完整摘要保留到读取，避免控制事件被大字符串撑满。
+
+普通应用通过 `/services/ai` 的 `progress` 通知读取自己的任务快照，匹配原任务及
+会话后呈现，定期读取用于恢复遗漏通知。应用的装饰动画使用显示完成回调控制下一帧，
+其节奏独立于远程工作的实际进度。Hub仅传递真实阶段和明确公开的commentary。
+
+### 可选语音回复与临时媒体
+
+回复形式由普通应用选择，通过系统AI调用的 `input.reply.mode` 发送 `text` 或 `speech`。
+Hub负责语音生成，系统仍按有序application/system动作分发；设备原生驱动负责压缩音频播放。
+默认对话应用保留文字，语音不可用时继续阅读文字。厂商/模型密钥和合成协议留在用户Hub。
+
+`/sys/transfers begin` 可显式选择策略中已声明的 `provider`；`explicit_only:true`目标只参与
+显式请求，不改变原有下载顺序。`lifetime:request`要求绑定当前 `remote_request_id`并使用
+声明临时所有权的文件后端。文件随AI任务交付保留到应用确认或请求结束；原生文件读租约
+尚在时延后回收。未收到传输回执、未被结果引用的临时传输同样由请求收尾清理。
+默认 `retained`继续用于应用包和需要保存的资源。RAM目标及配额由硬件包/系统策略声明，
+不会静默回退到Flash。
+
+语音媒体是分离文件，不放进控制JSON。应用收到 `wishos-audio/1` 描述后通过正常 `/fs`读取
+独立解码压缩块，遵守扬声器背压，等保留的原生播放完成再确认该application动作。
+退出、取消、超时和新录音都经过正常资源收尾；媒体播放失败只作为此回复的失败反馈。
+具体文字排版、输出切换、按住录音和菜单动作属于可替换套装。

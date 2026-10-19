@@ -647,7 +647,7 @@ test('cloud UI preflight uses current declared font coverage over relay without 
       assert.equal(job.state, valid ? 'completed' : 'failed', JSON.stringify(job));
       if (valid) {
         repaired = staged.result.id;
-        assert.equal(job.result.validator_version, '4');
+        assert.equal(job.result.validator_version, '6');
         assert.deepEqual(job.result.warnings, []);
       } else {
         assert.equal(job.diagnostics[0].code, 'ui_font_missing_glyph');

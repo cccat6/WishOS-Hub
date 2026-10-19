@@ -201,3 +201,36 @@ test('managed recording retries compare structured context by value and reject c
     db.close();
   }
 });
+
+test('recording identity retains nested reply policy and rejects changing it without discarding audio', async () => {
+  const db = new DatabaseSync(':memory:');
+  let seen: any;
+  const ingress = new OsAudioIngress(db, async (_device, _id, _wav, config) => {
+    seen = config.reply;
+    return { run_id: 'reply-run' };
+  });
+  const reply = {
+    mode: 'speech',
+    voice: 'Tingting',
+    future_hint: { style: 'short', language: 'zh' },
+  };
+  try {
+    ingress.begin('d', 'reply', { sample_rate: 16000, reply });
+    ingress.append('d', 'reply', [chunk(0)]);
+    ingress.begin('d', 'reply', {
+      sample_rate: 16000,
+      reply: { future_hint: { language: 'zh', style: 'short' }, voice: 'Tingting', mode: 'speech' },
+    });
+    assert.throws(
+      () => ingress.begin('d', 'reply', { sample_rate: 16000, reply: { mode: 'text' } }),
+      /audio_id_conflict/,
+    );
+    assert.equal(ingress.status('d', 'reply').blocks, 1);
+    ingress.finish('d', 'reply', { produced_samples: '160', capture_failed: false });
+    await until(() => seen !== undefined);
+    assert.deepEqual(seen, reply);
+  } finally {
+    await ingress.close();
+    db.close();
+  }
+});

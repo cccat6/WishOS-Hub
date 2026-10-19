@@ -10,8 +10,7 @@ Before rendering, discover the component, geometry, profile input format/byte co
 color space/palette, source access (stream or replay), update capability and latency
 estimate. Do not infer a 480×720 panel, six-color pixels, a BUSY pin, full-screen-only
 updates or a refresh delay from the generic display interface. Only use methods and
-formats declared by the installed adapter. See [E6 profiles](e6-display.md) for the
-current board's concrete inputs and recommendations.
+formats declared by the installed adapter. Discover the installed driver for its supported profiles and transfer formats.
 
 Use `/sys/ui open/update` for runtime JSON compositions, or an activated surface and
 `/dev/display present` / `begin,chunk,commit` for the declared native input. Raw bytes
@@ -64,6 +63,4 @@ updated, but no frame was submitted. Explicit refresh or a later update can retr
 after the application addresses the cause. Readiness faults also finish previously
 queued display jobs without issuing further hardware commands.
 
-Current hardware integration is E6. Immediate, DMA, BUSY and continuous-scanout
-completion models are validated using host adapters; this is not a claim that
-specific LCD/OLED/LED controllers have already been implemented or physically tested.
+Current native integrations include E6 and the LCKFB ST7789 SPI LCD. The latter has recorded physical DMA/display checks. Immediate, DMA, BUSY and continuous-scanout completion models also have host fixtures; these do not establish physical support for other LCD/OLED/LED devices.

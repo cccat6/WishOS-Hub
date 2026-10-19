@@ -13,7 +13,10 @@ export async function deliverBundle(
   expectedBoot: string | undefined,
   remoteRequestId: number | undefined,
   source: BundleSource,
-  options: Pick<PreflightOptions, 'compiler' | 'controlFiles'> = {},
+  options: Pick<PreflightOptions, 'compiler' | 'controlFiles'> & {
+    provider?: string;
+    lifetime?: 'request';
+  } = {},
 ) {
   let boot = expectedBoot;
   const rpc: DeviceRpc = async (path, method, args) => {
@@ -52,7 +55,15 @@ export async function deliverBundle(
         await crypto.subtle.digest(
           'SHA-256',
           new TextEncoder().encode(
-            JSON.stringify(resolved.map((f) => [f.destination, f.sha256, f.size])),
+            JSON.stringify(
+              options.provider || options.lifetime
+                ? {
+                    files: resolved.map((f) => [f.destination, f.sha256, f.size]),
+                    provider: options.provider,
+                    lifetime: options.lifetime,
+                  }
+                : resolved.map((f) => [f.destination, f.sha256, f.size]),
+            ),
           ),
         ),
       ).toString('hex');
@@ -117,10 +128,15 @@ export async function deliverBundle(
     };
     // Follow policy order; preparation and capacity scanning occur only for an
     // explicit delivery, never discovery. Re-read the selection after each change.
-    const storageSnapshot = async () => ({
-      policy: (await call('read', {})).policy ?? {},
-      volumes: await readMounts(rpc, signal),
-    });
+    const storageSnapshot = async () => {
+      const policy = (await call('read', {})).policy ?? {};
+      if (options.provider) {
+        const targets = policy.targets?.filter((t: any) => t.provider === options.provider);
+        if (!targets?.length) throw Error('transfer_target_not_allowed');
+        return { policy: { ...policy, targets }, volumes: await readMounts(rpc, signal) };
+      }
+      return { policy, volumes: await readMounts(rpc, signal) };
+    };
     const capacityStale = (volume: any) =>
       volume.free_needs_refresh === true ||
       (Object.hasOwn(volume, 'volume_capacity_bytes') &&
@@ -133,6 +149,7 @@ export async function deliverBundle(
         signal.throwIfAborted();
         let selected: any, pending: any;
         for (const target of snapshot.policy.targets ?? []) {
+          if (!options.provider && target.explicit_only) continue;
           const volume = snapshot.volumes.find((p: any) => p.id === target.provider);
           if (!volume) continue;
           if (volume.available) {
@@ -194,10 +211,23 @@ export async function deliverBundle(
         checkApplicationStorage(apps.result, snapshot.policy, snapshot.volumes, false);
       }
     };
+    if (options.provider || options.lifetime) {
+      const cap = await rpc('/sys/capabilities', 'describe', { path: '/sys/transfers' });
+      if (
+        !cap.ok ||
+        cap.result.begin_options?.provider?.selection !== 'declared_policy_target' ||
+        !cap.result.begin_options?.lifetime?.choices?.includes(options.lifetime ?? 'retained')
+      )
+        throw Error('transfer_options_unavailable');
+      if (options.lifetime === 'request' && !remoteRequestId)
+        throw Error('transfer_request_lifetime_identity');
+    }
     await prepareStorage();
     await checkPackageStorage();
     const beginArgs = {
       request_id: key,
+      ...(options.provider ? { provider: options.provider } : {}),
+      ...(options.lifetime ? { lifetime: options.lifetime } : {}),
       ...(remoteRequestId ? { remote_request_id: remoteRequestId } : {}),
       bytes: String(total),
       files: files.length,

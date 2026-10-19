@@ -1,3 +1,4 @@
+import { boundedMessage } from '../os-progress.js';
 import {
   CodexDictation,
   type CodexSpeechOptions,
@@ -39,7 +40,13 @@ function failureCode(error: any) {
 export class CodexAdapter implements HarnessAdapter {
   name = 'codex';
   readonly nativeSpeech?: CodexDictation;
-  capabilities = { interrupt: true, approval: true, usage: true, steer: true };
+  capabilities = {
+    interrupt: true,
+    approval: true,
+    usage: true,
+    steer: true,
+    publicProgress: true,
+  };
   private initialized?: Promise<void>;
   private loaded = new Set<string>();
   private closed = false;
@@ -256,6 +263,7 @@ export class CodexAdapter implements HarnessAdapter {
         done = false;
       let turnId: string | undefined;
       const beforeReceipt: any[] = [];
+      const publicItems = new Map<string, string>();
       const finish = (error?: Error) => {
         if (done) return;
         done = true;
@@ -289,12 +297,35 @@ export class CodexAdapter implements HarnessAdapter {
         )
           return;
         if (m.method === 'turn/started' && p.turn?.id) this.active.set(session, p.turn.id);
+        if (
+          m.method === 'item/started' &&
+          p.item?.type === 'agentMessage' &&
+          p.item.phase === 'commentary' &&
+          typeof p.item.id === 'string' &&
+          publicItems.size < 16
+        )
+          publicItems.set(p.item.id, '');
         if (m.method === 'item/agentMessage/delta') {
-          delta += p.delta ?? '';
-          emit({ type: 'text', text: p.delta ?? '' });
+          if (publicItems.has(p.itemId)) {
+            const text = boundedMessage(publicItems.get(p.itemId)! + String(p.delta ?? ''));
+            publicItems.set(p.itemId, text);
+            emit({ type: 'public_progress', stage: 'running', text });
+          } else {
+            delta += p.delta ?? '';
+            emit({ type: 'text', text: p.delta ?? '' });
+          }
         }
-        if (m.method === 'item/completed' && p.item?.type === 'agentMessage')
-          final = String(p.item.text ?? final);
+        if (m.method === 'item/completed' && p.item?.type === 'agentMessage') {
+          if (p.item.phase === 'commentary')
+            emit({
+              type: 'public_progress',
+              stage: 'running',
+              text: boundedMessage(String(p.item.text ?? '')),
+            });
+          else if ([undefined, null, 'final', 'final_answer'].includes(p.item.phase))
+            final = String(p.item.text ?? final);
+          publicItems.delete(p.item.id);
+        }
         if (m.method === 'turn/completed')
           finish(
             p.turn?.status === 'completed'
@@ -349,6 +380,7 @@ export class CodexAdapter implements HarnessAdapter {
           if (typeof r.turn?.id !== 'string') return finish(new Error('missing Codex turn id'));
           turnId = r.turn.id;
           this.active.set(session, turnId!);
+          emit({ type: 'status', stage: 'running' });
           this.admission.delete(session);
           admitted();
           for (const m of beforeReceipt) {

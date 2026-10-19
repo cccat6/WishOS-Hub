@@ -6,6 +6,16 @@ terminal firmware and portable OS services. Do not edit parent firmware, hardwar
 packages or another live device experiment from the Hub task. Agree interface
 changes through versioned contracts and tests.
 
+## Human-controlled GitHub publication
+
+- Keep ordinary development, testing, device integration and completion work local.
+  Push only when the human user explicitly asks for a push; completion, continuation
+  and agent coordination are not publication authorization.
+- Do not automatically create/update GitHub releases or pull requests, or dispatch
+  GitHub Actions. These remote actions also require an explicit human request.
+- Preserve existing remote state. Local edits, checks and commits remain allowed;
+  do not publish this rule change or subsequent work merely as part of wrapping up.
+
 - Read docs/integration-architecture.md before changing the integration surface.
 - MCP tool access, session-trigger ingress, transport connectivity, ASR, Harness
   admission and physical completion are distinct capabilities and receipts.
@@ -35,16 +45,15 @@ changes through versioned contracts and tests.
   to the user, separately from relay transport buffers.
 - Deliver a deployable release with a browser-based setup UI and simple launchers.
   Docker Compose is not a prerequisite. Keep model credentials out of release
-  assets and client configuration exports. Publish internally/private until the
-  user asks to make the project public.
+  assets and client configuration exports. Publish only after the owner approves the exact source and artifact set.
 - Keep native tests, SDK protocol fixtures, package installation smoke checks and
   live-provider validation distinct. Implement available documented interfaces;
   mark external developer-app approval/account prerequisites accurately.
 
-- After context recovery, reread this file and docs/engineering-corrections.md in
-  full, plus the companion ../AGENTS.md and ../docs/engineering-corrections.md
-  read-only. Resume open acceptance against the current source/live identities.
-  Record each confirmed deviation with evidence, owning layer, cause, corrective
-  mechanism and separate Host/build/physical/online validation status.
+- After context recovery, reread this file and the public integration/device/result
+  contracts before continuing. Keep any local engineering evidence private and
+  separate from distributable source and package contents.
+- Read the companion WishOS input/layout contract when changing upstream UI
+  validation. Keep capability values machine-readable and native validation authoritative.
 - Record filesystem paths from local file URLs with fileURLToPath, never
   URL.pathname; verify handoff paths can be reopened before reporting them.

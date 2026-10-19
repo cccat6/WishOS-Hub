@@ -1,3 +1,5 @@
+import { createTarArchive } from './release-archive.mjs';
+import { releaseSourceFiles } from './release-files.mjs';
 import { smokePackage } from './smoke-package.mjs';
 import { readFile, mkdir, cp, writeFile, chmod, rm } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
@@ -9,17 +11,15 @@ const name = `wishos-hub-${pkg.version}-${process.platform}-${process.arch}`;
 const root = resolve('build/release', name);
 await rm(root, { recursive: true, force: true });
 await mkdir(root, { recursive: true });
-for (const file of [
-  'dist',
-  'package.json',
-  'package-lock.json',
-  'LICENSE',
-  'README.md',
-  'docs',
-  'skills',
-  'vendor',
-])
+const git = process.env.WISHOS_GIT ?? 'git';
+const tracked = execFileSync(git, ['ls-tree', '-r', '--name-only', 'HEAD'], { encoding: 'utf8' })
+  .trim()
+  .split('\n');
+await cp('dist', join(root, 'dist'), { recursive: true });
+for (const file of releaseSourceFiles(tracked)) {
+  await mkdir(dirname(join(root, file)), { recursive: true });
   await cp(file, join(root, file), { recursive: true });
+}
 execFileSync(
   process.platform === 'win32' ? 'npm.cmd' : 'npm',
   ['ci', '--omit=dev', '--no-audit', '--no-fund'],
@@ -73,10 +73,7 @@ if (process.platform === 'win32')
     ],
     { stdio: 'inherit' },
   );
-else
-  execFileSync('tar', ['-czf', archive, '-C', resolve('build/release'), name], {
-    stdio: 'inherit',
-  });
+else createTarArchive(archive, resolve('build/release'), name);
 const bytes = await readFile(archive);
 await writeFile(
   archive + '.sha256',

@@ -47,6 +47,7 @@ export function checkApplicationStorage(
     throw new PreflightError('application_storage_policy');
   if (!allowed.length) throw new PreflightError('application_storage_disabled');
   for (const target of policy.targets ?? []) {
+    if (target.explicit_only) continue;
     const volume = providers.find((p) => p.id === target.provider);
     if (!volume || (!volume.available && !(includePreparation && volume.prepare))) continue;
     if (!allowed.includes(target.provider))
@@ -561,7 +562,7 @@ async function checkResolved(
   return {
     format: 'wishos-preflight/1',
     ok: true,
-    validator_version: '4',
+    validator_version: '6',
     content_sha256: contentIdentity(files),
     bytes: String(files.reduce((n, f) => n + f.size, 0)),
     files: files.map((f) => ({ path: f.destination, bytes: String(f.size), sha256: f.sha256 })),

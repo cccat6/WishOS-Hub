@@ -97,7 +97,7 @@ test('owner publication checks complete source lineage and rejects unverified or
     .flatMap((a) => [a, { name: a.name + '.sha256', sha256: sha256(a.sha256), size: 100 }])
     .concat({ name: 'SHA256SUMS', sha256: sha256('manifest'), size: 100 });
   const manifest = {
-    release_id: 414006214,
+    release_id: 123456,
     tag: 'vtest',
     source_commit: commit,
     artifacts,
@@ -176,16 +176,16 @@ test('draft asset upload uses its release ID, streams original bytes and validat
     path = join(root, 'package.zip');
   const file = { name: 'package.zip', size: bytes.length, sha256: sha256(bytes) };
   const release = {
-    id: 414006214,
+    id: 123456,
     upload_url:
-      'https://uploads.github.com/repos/cccat6/WishOS-Hub/releases/414006214/assets{?name,label}',
+      'https://uploads.github.com/repos/cccat6/WishOS-Hub/releases/123456/assets{?name,label}',
   };
   try {
     await writeFile(path, bytes);
     await uploadAsset('cccat6/WishOS-Hub', release, file, path, {
       token: 'fixture-only',
       fetcher: async (url: any, init: any) => {
-        assert.equal(url.pathname, '/repos/cccat6/WishOS-Hub/releases/414006214/assets');
+        assert.equal(url.pathname, '/repos/cccat6/WishOS-Hub/releases/123456/assets');
         assert.equal(url.searchParams.get('name'), file.name);
         assert.equal(init.headers.Authorization, 'Bearer fixture-only');
         assert.equal(init.redirect, 'error');

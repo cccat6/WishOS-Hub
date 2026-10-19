@@ -98,3 +98,62 @@ previous policy. Writable volume presence does not itself grant installation.
 A foreground instance may call `/sys/apps guard_exit {enabled:true,timeout_ms:30000}` while it owns a live operation that needs a departure decision. On `exit_requested`, render ordinary confirmation UI and call `resolve_exit {operation_id,allow}`. A rejected or timed-out transition leaves the existing instance running; `exit_cancelled` tells it to dismiss an expired prompt. Only that foreground owner can answer. Repeating the independent system Home bypasses the guard, and a fault cannot trap the user. Turn the guard off when the reason disappears. This is a lifecycle boundary, not a settings-specific privilege.
 
 For a browser workflow, bind `/net/http-server session {action:"open",path}` to an application route, ping the returned id before its 30000 ms TTL, and close on page exit. Owner-scoped `read.clients` reports live peers. Route replacement/owner exit invalidates the session; an expired client must not silently reattach to another application instance. These leases track liveness, not credentials.
+
+## Request provenance
+
+`/sys/apps context` returns `current` activation identity and, when present,
+`launch_origin` captured before the previous instance was torn down. Identity
+includes application/instance/catalog revision, manifest/version and package digest
+when installed as a package. An owned foreground UI adds its view id, revision and
+path. A catalog update cannot rewrite the identity of the still-running version.
+The system AI service attaches this snapshot as `wishos-ai/2` payload.context.
+Use it to identify a modification target; it does not bypass native package or
+view revision checks. A voice app itself is not automatically the app to modify.
+
+## Foreground voice input
+
+Discover `/sys/apps` voice-input metadata and the protected gesture in
+`/sys/navigation`. Applications that handle voice in place can use the ordinary
+runtime module:
+
+```lua
+local ai = notes.require('/system/lib/ai.lua')
+local voiceEntry
+function on_start()
+  voiceEntry = ai.voice_input(function(input)
+    -- Start your configured mic/AI request through system APIs.
+    -- Include current page/action meanings and the intended Harness session.
+  end, function(input)
+    -- Stop that recording and let the system-owned request finish.
+  end)
+end
+function on_stop()
+  if voiceEntry then voiceEntry.stop() end
+end
+```
+
+The callbacks share a `request_id`. Direct users register
+`voice_input {enabled:true}` and receive `/sys/apps:voice_requested` and
+`/sys/navigation:voice_released`, targeted to the registered foreground instance.
+Registration ends with that instance; a new application registers its own handler.
+Applications without a handler use the configured ordinary voice application,
+with captured launch origin. The helper also handles a still-held protected input
+when that default application finishes loading. Releasing before loading finishes
+clears its pending recording intent.
+
+Provide page and control semantics for voice actions: local navigation can be an
+`application` action handled by that app, while opening another app or updating a
+package uses the corresponding `system` resource call. Determine action ordering
+from the task. A voice request can ask for an operation, a conversation or an app;
+its existence alone does not mean a package update. Keep protected Home reachable
+through the configured independent gesture while recording. On single-key
+devices, discover whether Home uses multiple clicks rather than assuming a longer
+hold. Explain the actual gesture in help.
+
+Session browsing is ordinary app code. Ask the configured Hub through the system
+AI API; keep only selected `{runtime_id,session_id,session_scope}` references,
+mode and unresolved creation operation IDs in app preferences. History and memory
+are owned by the Harness. Fixed-bot and selectable-session modes do not change an
+in-flight request or the connector's device-wide default. Handle the server's
+advertised operations, short opaque pagination cursors and bounded public message
+excerpts. Show failures without silently creating a replacement conversation.

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { HarnessAdapter, AgentEvent } from './types.js';
+import type { HarnessAdapter, AgentEvent } from '../../src/adapters/types.js';
 export class MockAdapter implements HarnessAdapter {
   name = 'mock';
   capabilities = { interrupt: false, approval: false };

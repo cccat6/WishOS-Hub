@@ -222,3 +222,63 @@ test('native failure receipts retain safe machine HTTP codes without exposing pr
     await a.close();
   }
 });
+
+test('Codex exposes only same-turn explicit commentary as public progress and keeps final separate', async () => {
+  const { EventEmitter } = await import('node:events');
+  let wire: any;
+  wire = Object.assign(new EventEmitter(), {
+    write() {},
+    async close() {},
+    async request(method: string) {
+      if (method === 'initialize') return {};
+      if (method === 'turn/start') {
+        setTimeout(() => {
+          const send = (method: string, params: any) =>
+            wire.emit('message', {
+              method,
+              params: { threadId: 'existing', turnId: 't', ...params },
+            });
+          send('item/completed', { item: { type: 'reasoning', text: 'PRIVATE_REASONING' } });
+          send('item/completed', {
+            threadId: 'other',
+            item: { type: 'agentMessage', phase: 'commentary', text: 'OTHER_SESSION' },
+          });
+          send('item/started', { item: { id: 'p', type: 'agentMessage', phase: 'commentary' } });
+          send('item/agentMessage/delta', { itemId: 'p', delta: '正在生成界面' });
+          send('item/completed', {
+            item: { id: 'p', type: 'agentMessage', phase: 'commentary', text: '界面完成' },
+          });
+          send('item/completed', {
+            turnId: 'other',
+            item: { type: 'agentMessage', phase: 'commentary', text: 'OTHER_TURN' },
+          });
+          send('item/completed', {
+            item: {
+              type: 'agentMessage',
+              phase: 'final_answer',
+              text: '{"format":"wishos-result/2"}',
+            },
+          });
+          send('turn/completed', { turn: { id: 't', status: 'completed' } });
+        }, 5);
+        return { turn: { id: 't' } };
+      }
+      throw Error(method);
+    },
+  });
+  const adapter = new CodexAdapter(wire, 1000);
+  const events: any[] = [];
+  try {
+    const result = await adapter.send('existing', 'test', (e) => events.push(e));
+    assert.equal(result, '{"format":"wishos-result/2"}');
+    const progress = events.filter((e) => e.type === 'public_progress');
+    assert.deepEqual(
+      progress.map((e) => e.text),
+      ['正在生成界面', '界面完成'],
+    );
+    assert(!JSON.stringify(events).includes('PRIVATE_REASONING'));
+    assert(!JSON.stringify(progress).includes('OTHER_'));
+  } finally {
+    await adapter.close();
+  }
+});

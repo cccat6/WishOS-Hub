@@ -32,14 +32,11 @@ initial reference follows `factory_launcher`. Preflight is read-only; delivery r
 actual target after explicit preparation. Ordinary media uses `/sys/transfers`
 policy independently. Device packages choose SD or explicitly quota-limited Flash;
 Hub does not infer policy from MCU/Flash capacity or presume `/system` is writable.
-The initial Launcher is a normal package; final internal-filesystem/update path
-semantics are being coordinated with the terminal owner.
+The initial Launcher is a normal package selected by device configuration.
 
 The host bridge preserves request/boot identity and treats lost responses as
 uncertain unless transport proves the request was not dispatched. Native accepted,
 validated, installed, activated and physically completed are distinct states.
 Read-only recovery does not authorize replaying an uncertain mutation.
 
-Release-specific historical results stay in validation.md and versioned release
-proofs. Current in-progress source audit and integration status are in
-full-audit.md; older successful releases do not validate new working-tree changes.
+Validation scopes and contributor checks are described in validation.md.

@@ -10,7 +10,8 @@ import { InMemoryTransport } from '@modelcontextprotocol/server';
 import { createWishosMcp } from '../src/wishos-mcp.js';
 import { authoringInstructions } from '../src/guidance.js';
 import { ArtifactStore } from '../src/os-artifacts.js';
-import { managedAgentRoute } from '../src/os-agent.js';
+import { parseManagedResult } from '../src/actions.js';
+import { managedAgentRoute, managedPrompt, managedResultEnvelope } from '../src/os-agent.js';
 
 test('authoring and modification discover the same shipped checklist through prompts or tools without resource browsing', async () => {
   const calls: string[] = [];
@@ -120,4 +121,74 @@ test('each managed text request carries authoring review and keeps application r
     db.close();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('managed prompts carry a parser-validated canonical envelope and preserve strict rejection of the real Cube wrong discriminator', () => {
+  const wrong =
+    '{"version":"wishos-result/2","actions":[{"type":"application","recipient":"origin","data":{"text":"进度测试完成"}}]}';
+  assert.throws(() => parseManagedResult(wrong), /managed_result_format/);
+  const prompt = managedPrompt('f57a77c702b6c3ef:3');
+  assert(prompt.includes(JSON.stringify(managedResultEnvelope)));
+  assert(prompt.includes('不是 version'));
+  const canonical = parseManagedResult(JSON.stringify(managedResultEnvelope));
+  assert.equal(canonical.format, 'wishos-result/2');
+  assert.equal(canonical.actions![0].type, 'application');
+  assert.throws(
+    () =>
+      parseManagedResult('{"format":"wishos-result/2","version":"wishos-result/2","actions":[]}'),
+    /managed_result_field/,
+  );
+});
+
+test('shipped checklist discovers input topology before choosing accessible navigation and typography', async () => {
+  const checklist = await readFile(
+    new URL('../skills/wishos-applications/references/authoring-checklist.md', import.meta.url),
+    'utf8',
+  );
+  for (const fragment of [
+    '按钮数量',
+    '去抖',
+    '触屏',
+    '轴',
+    'Home',
+    '单键',
+    '无触屏',
+    '可配置扫描',
+    '语义角色',
+    'verticalAlign',
+    'label_vertical_align',
+    '对比度',
+  ])
+    assert(checklist.includes(fragment), fragment);
+  assert(authoringInstructions().includes('先读按钮数量'));
+});
+
+test('authoring guidance checks real parent bounds and font line boxes and teaches gestures without inventing them', async () => {
+  const checklist = await readFile(
+    new URL('../skills/wishos-applications/references/authoring-checklist.md', import.meta.url),
+    'utf8',
+  );
+  for (const text of [
+    '真实承载卡片',
+    '父容器局部坐标',
+    '实际渲染边界',
+    '内边距',
+    '相邻按钮',
+    '多行最后一行',
+    'line_height 可以大于 fontSize',
+    '不能以字号×行数',
+    '完整动词',
+    '单击 → 双击 → 三击 → 长按',
+    '仅列当前需要',
+    '完整帮助仍须与当前系统配置',
+    '空间不足就分行或分页',
+  ])
+    assert(checklist.includes(text), text);
+  const skill = await readFile(
+    new URL('../skills/wishos-applications/SKILL.md', import.meta.url),
+    'utf8',
+  );
+  assert(skill.includes('line_height'));
+  assert(skill.includes('真实承载'));
+  assert(skill.includes('完整顺序'));
 });

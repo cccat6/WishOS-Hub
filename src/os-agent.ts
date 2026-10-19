@@ -1,3 +1,6 @@
+import { prepareReplyAudio, replyAudioError } from './reply-audio.js';
+import { TtsService, ReplyPreference } from './tts.js';
+import type { PublicProgress } from './os-progress.js';
 import { preflightAction } from './preflight-actions.js';
 import { nodeLuaCompiler } from './node-lua-compiler.js';
 import { bootRpc } from './device-files.js';
@@ -9,8 +12,14 @@ import type { RemoteHandler, RemoteRequest, DeviceRpc } from './os-remote.js';
 import { RetryableRemoteError } from './os-remote.js';
 import { ArtifactStore } from './os-artifacts.js';
 import { parseManagedResult, validateAction, validateReferences } from './actions.js';
+export const managedResultEnvelope = {
+  format: 'wishos-result/2',
+  actions: [
+    { type: 'application', recipient: 'origin', data: { text: '回复内容' }, wait: 'processed' },
+  ],
+};
 export function managedPrompt(requestId: string) {
-  return `WishOS 托管请求 ${requestId}。返回 wishos-result/2 JSON，有序 actions 只分 application/system，可交替。application 使用 {type:"application",recipient:"origin"|"foreground",topic?,data:{},wait?:"processed"|"queued"}；默认 processed 等精确 VM 读取并确认，queued 仅送达，不能充当替换屏障。system 使用 {type:"system",path,method,args:{}} 调用声明资源并等原生完成。先发现能力/预算/组件指南。${authoringInstructions()} 通过 stage_resource 暂存大资源，轮询完成取得 artifact_id，放入 files:[{path,artifact_id,kind?}]；用 {$asset:"相对路径"} 引用。{$previous:"a/b"} 是上一步结果，空路径取整个结果，勿插入或重排步骤改变其含义。包安装连续步骤为 /sys/apps validate {manifest:{$asset:"app.json"},package:{$asset:"package.json"}} → install {manifest:{$asset:"app.json"},package:{$asset:"package.json"},validation_id:{$previous:"operation_id"},expected_revision:{$previous:"revision"}} → launch {id:{$previous:"application_id"}}。原生验证不执行 on_start；安装卷须符合声明 install_providers，初始 Launcher 与用户应用同层，文件可写性按设备声明。只显示 UI 则使用声明的 /sys/ui，不必安装应用。大动作计划用暂存 JSONL 及 sequence:{path:"actions.jsonl",format:"jsonl"}，每条符合 action_limit_bytes，无固定条数。重 JSON/XML、索引和绘图在上游处理。模型凭据/会话仍归用户 Harness。不要通过 MCP 预执行将要返回的动作；设备系统负责顺序、接收者、失败/取消和资源释放。`;
+  return `WishOS 托管请求 ${requestId}。final 必须返回完整 JSON envelope，协议标识的字段名是 format（不是 version），值为 wishos-result/2。最小文字回复完整示例：${JSON.stringify(managedResultEnvelope)}。input.reply.mode=speech 时仍返回完整文字，语音合成与RAM资源交付由用户自托管Hub处理；不要编造audio路径，不为此调用模型TTS工具或输出服务密钥。不得只返回 actions 或用 version 替代 format，不要加代码围栏；实际内容和动作按用户请求填写。有序 actions 只分 application/system，可交替。application 使用 {type:"application",recipient:"origin"|"foreground",topic?,data:{},wait?:"processed"|"queued"}；默认 processed 等精确 VM 读取并确认，queued 仅送达，不能充当替换屏障。system 使用 {type:"system",path,method,args:{}} 调用声明资源并等原生完成。先发现能力/预算/组件指南。${authoringInstructions()} 通过 stage_resource 暂存大资源，轮询完成取得 artifact_id，放入 files:[{path,artifact_id,kind?}]；用 {$asset:"相对路径"} 引用。{$previous:"a/b"} 是上一步结果，空路径取整个结果，勿插入或重排步骤改变其含义。包安装连续步骤为 /sys/apps validate {manifest:{$asset:"app.json"},package:{$asset:"package.json"}} → install {manifest:{$asset:"app.json"},package:{$asset:"package.json"},validation_id:{$previous:"operation_id"},expected_revision:{$previous:"revision"}} → launch {id:{$previous:"application_id"}}。原生验证不执行 on_start；安装卷须符合声明 install_providers，初始 Launcher 与用户应用同层，文件可写性按设备声明。只显示 UI 则使用声明的 /sys/ui，不必安装应用。大动作计划用暂存 JSONL 及 sequence:{path:"actions.jsonl",format:"jsonl"}，每条符合 action_limit_bytes，无固定条数。重 JSON/XML、索引和绘图在上游处理。模型凭据/会话仍归用户 Harness。不要通过 MCP 预执行将要返回的动作；设备系统负责顺序、接收者、失败/取消和资源释放。`;
 }
 export function managedText(requestId: string, text: string, context: unknown) {
   return (
@@ -57,8 +66,11 @@ async function visitActions(
 export function managedAgentRoute(options: {
   rpc: DeviceRpc;
   artifacts: ArtifactStore;
+  tts?: TtsService;
   start: (request: RemoteRequest, text: string) => any;
   status: (id: string) => any;
+  readProgress?: (id: string) => PublicProgress | undefined;
+  bindProgress?: (r: RemoteRequest) => () => void;
   cancel?: (id: string) => Promise<void>;
   voice?: RemoteHandler;
   resolveSession?: (input: Record<string, unknown>) => void;
@@ -69,11 +81,13 @@ export function managedAgentRoute(options: {
   ) => Promise<any>;
   validateApplicationAction?: (action: any) => Promise<void>;
 }): RemoteHandler {
-  const handler: RemoteHandler = async (r, signal) => {
+  const work: RemoteHandler = async (r, signal) => {
     if (r.payload.format !== 'wishos-ai/2' || 'target' in r.payload)
       throw Error('managed_request_format');
+    r.reportProgress?.({ stage: 'received' });
     const input = r.payload.input as Record<string, unknown>;
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw Error('managed_input');
+    ReplyPreference.parse(input.reply ?? {});
     options.resolveSession?.(input);
     if (input.kind === 'session_control') {
       if (!options.sessionControl) throw Error('session_control_unavailable');
@@ -107,6 +121,16 @@ export function managedAgentRoute(options: {
       return wrap(data);
     }
     let run: any;
+    let lastProgress = '';
+    const reportRun = () => {
+      if (!run?.id) return;
+      const p = options.readProgress?.(run.id);
+      if (p && JSON.stringify(p) !== lastProgress) {
+        lastProgress = JSON.stringify(p);
+        r.reportProgress?.(p);
+      }
+    };
+
     if (input.kind === 'voice') {
       if (!options.voice) throw Error('speech_unavailable');
       const request = {
@@ -122,6 +146,7 @@ export function managedAgentRoute(options: {
       await options.voice.admit?.(request, signal);
       run = { id: ((await options.voice(request, signal)) as any).run_id };
     } else {
+      r.reportProgress?.({ stage: 'received' });
       if (typeof input.text !== 'string') throw Error('managed_text_required');
       const text = input.text;
       run = options.start(r, managedText(r.request_id, text, managedContext(r)));
@@ -140,6 +165,7 @@ export function managedAgentRoute(options: {
     try {
       for (;;) {
         signal.throwIfAborted();
+        reportRun();
         done = options.status(run.id);
         if (!done) throw Error('managed_run_missing');
         if (['completed', 'failed', 'uncertain'].includes(done.status)) break;
@@ -160,6 +186,7 @@ export function managedAgentRoute(options: {
     }
     if (done.status !== 'completed')
       throw Error(done.status === 'uncertain' ? 'handler_outcome_unknown' : 'harness_failed');
+    r.reportProgress?.({ stage: 'preparing' });
     const identity = await options.rpc(
       '/sys/board',
       'read',
@@ -200,71 +227,104 @@ export function managedAgentRoute(options: {
         async () => {
           result.operation_id = run.id;
           const rpc = bootRpc(options.rpc, identity.boot_id);
-          const report = result.files?.length
-            ? await options.artifacts.preflight(result.files, {
-                rpc,
-                expectedBoot: identity.boot_id,
-                controlFiles: result.sequence ? [result.sequence.path] : [],
-                signal,
-              })
-            : undefined;
-          await visitActions(result, options.artifacts, actionBytes, signal, (action) =>
-            preflightAction(action as Parameters<typeof preflightAction>[0], {
-              source: options.artifacts,
-              files: result.files ?? [],
-              report,
-              rpc,
-              compiler: nodeLuaCompiler,
-              signal,
-            }),
+          const audio = await prepareReplyAudio(
+            result,
+            input,
+            options.tts ?? new TtsService(),
+            rpc,
+            options.artifacts,
+            signal,
+            { actionBytes, inlineBytes },
           );
-          if (
-            result.actions &&
-            Buffer.byteLength(JSON.stringify({ ...result, files: undefined })) > inlineBytes
-          ) {
-            const actions = result.actions;
-            const staged = await options.artifacts.stageStream(
-              (async function* () {
-                for (const action of actions) yield Buffer.from(JSON.stringify(action) + '\n');
-              })(),
-              undefined,
-              signal,
-            );
-            const path = 'wishos-actions-' + randomUUID() + '.jsonl';
-            result.files = [...(result.files ?? []), { path, artifact_id: staged.id }];
-            delete result.actions;
-            result.sequence = { path, format: 'jsonl' };
-          }
-          const files = result.files;
-          delete result.files;
-          // Result metadata itself must fit before starting a device-side transaction.
-          if (
-            Buffer.byteLength(JSON.stringify({ ...result, transfer_id: 4294967295 })) > inlineBytes
-          )
-            throw Error('managed_result_metadata_limit');
-          if (files?.length) {
-            try {
-              const delivered = await options.artifacts.deliver(
-                options.rpc,
-                files,
+          const audioFallback = audio.delivery ? structuredClone(result.actions) : undefined;
+          try {
+            const report = result.files?.length
+              ? await options.artifacts.preflight(result.files, {
+                  rpc,
+                  expectedBoot: identity.boot_id,
+                  controlFiles: result.sequence ? [result.sequence.path] : [],
+                  signal,
+                })
+              : undefined;
+            await visitActions(result, options.artifacts, actionBytes, signal, (action) =>
+              preflightAction(action as Parameters<typeof preflightAction>[0], {
+                source: options.artifacts,
+                files: result.files ?? [],
+                report,
+                rpc,
+                compiler: nodeLuaCompiler,
                 signal,
-                r.boot_id,
-                r.id,
-                result.sequence ? [result.sequence.path] : [],
+              }),
+            );
+            if (
+              result.actions &&
+              Buffer.byteLength(JSON.stringify({ ...result, files: undefined })) > inlineBytes
+            ) {
+              const actions = result.actions;
+              const staged = await options.artifacts.stageStream(
+                (async function* () {
+                  for (const action of actions) yield Buffer.from(JSON.stringify(action) + '\n');
+                })(),
+                undefined,
+                signal,
               );
-              result.transfer_id = delivered.transfer_id;
-            } catch (error) {
-              if (
-                error instanceof Error &&
-                !(error as any).transfer_receipt?.preparation &&
-                (error as any).transfer_receipt?.state !== 'begin_outcome_unknown' &&
-                /disconnected|transport|outcome_unknown|transfer_active/.test(error.message)
-              )
-                throw new RetryableRemoteError(error.message);
-              throw error;
+              const path = 'wishos-actions-' + randomUUID() + '.jsonl';
+              result.files = [...(result.files ?? []), { path, artifact_id: staged.id }];
+              delete result.actions;
+              result.sequence = { path, format: 'jsonl' };
             }
+            const files = result.files;
+            delete result.files;
+            // Result metadata itself must fit before starting a device-side transaction.
+            if (
+              Buffer.byteLength(JSON.stringify({ ...result, transfer_id: 4294967295 })) >
+              inlineBytes
+            )
+              throw Error('managed_result_metadata_limit');
+            if (files?.length) {
+              try {
+                r.reportProgress?.({ stage: 'transferring' });
+                const delivered = await options.artifacts.deliver(
+                  options.rpc,
+                  files,
+                  signal,
+                  r.boot_id,
+                  r.id,
+                  result.sequence ? [result.sequence.path] : [],
+                  audio.delivery,
+                );
+                result.transfer_id = delivered.transfer_id;
+              } catch (error) {
+                if (audio.delivery && !signal.aborted) {
+                  delete result.sequence;
+                  delete result.transfer_id;
+                  result.actions = audioFallback;
+                  const receipt = (error as any)?.transfer_receipt;
+                  const unknown =
+                    receipt?.state === 'begin_outcome_unknown' ||
+                    /transport|disconnected|timeout|outcome_unknown/.test(
+                      String((error as any)?.message),
+                    );
+                  replyAudioError(
+                    result,
+                    unknown ? 'tts_delivery_uncertain' : 'tts_delivery_failed',
+                  );
+                  return result;
+                }
+                if (
+                  error instanceof Error &&
+                  !(error as any).transfer_receipt?.preparation &&
+                  (error as any).transfer_receipt?.state !== 'begin_outcome_unknown' &&
+                  /disconnected|transport|outcome_unknown|transfer_active/.test(error.message)
+                )
+                  throw new RetryableRemoteError(error.message);
+                throw error;
+              }
+            }
+            return result;
+          } finally {
+            audio.release();
           }
-          return result;
         },
       );
       if (Buffer.byteLength(JSON.stringify(prepared)) > inlineBytes)
@@ -272,6 +332,14 @@ export function managedAgentRoute(options: {
       return prepared;
     } finally {
       release();
+    }
+  };
+  const handler: RemoteHandler = async (r, signal) => {
+    const unbind = options.bindProgress?.(r);
+    try {
+      return await work(r, signal);
+    } finally {
+      unbind?.();
     }
   };
   handler.replaySafe = true;

@@ -230,10 +230,12 @@ export class ArtifactStore {
     expectedBoot?: string,
     remoteRequestId?: number,
     controlFiles?: string[],
+    delivery?: { provider: string; lifetime: 'request' },
   ) {
     return deliverBundle(transport, files, signal, expectedBoot, remoteRequestId, this, {
       compiler: nodeLuaCompiler,
       controlFiles,
+      ...delivery,
     });
   }
 }

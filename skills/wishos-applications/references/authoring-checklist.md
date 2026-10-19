@@ -10,6 +10,18 @@
 - [ ] **目标与运行环境**：发现 boot、组件、显示配置、几何、字体、运行时版本、存储和预算。
   同一 MCU 不代表同一外设；只用系统公开资源，不直接操作 GPIO/RTOS/寄存器。
   新建应用和修改完整 revision 都执行本清单，不因上一版通过而跳过受影响的路径。
+- [ ] **输入能力先发现**：制作 UI 前读取实际逻辑按钮数量／标识、可用手势与去抖／长按／
+  多击时间、触屏、轴／滑条等输入能力，以及当前系统保留的语音与 Home 绑定。不能从
+  MCU、示例设备、GPIO 或触屏存在推断硬件交互；基础操作须有单键／无触屏可达路径。
+  全局长按语音按系统路由：前台声明则接管，否则普通默认语音应用；不能截获系统恢复入口。
+  单／双／三击仅在能力和显示延迟允许时采用；不适合快速多击时使用可配置扫描焦点／选择，
+  不要求用户在慢速 EPD 刷新间连击。多键使用语义角色而非固定左右 GPIO，滑条／轴可映射
+  previous/next；触屏提供补充操作而不是唯一入口。菜单、弹层、返回、分页、确认和设置
+  都检查可达性，并提供可发现帮助和当前焦点反馈；具体绑定、扫描节奏属于普通应用／配置。
+  必须验证返回／Home本身也是可选目标，不能只让内容按钮进入焦点列表；当前输入不支持的
+  多击、hold/release或方向角色要在交付前降级为已声明能力，不等待不存在的事件。
+  若使用普通navigation模块，bind(options)的应用动作表、back及config.roles应覆盖这些出口，
+  scan只移动焦点、activate才执行；轴输入复用axis(source,event,options,callback)，不直接读硬件。
 - [ ] **动态值**：为时钟、倒计时、电量、联网状态、远端数据等写清来源、事件或定时更新、
   显示精度和失效反馈。静态页面模板不等于会更新的程序；只在初次打开读取一次不够。
   网络超时、断线、时间无效时按应用需要保留旧值并标明过期/更新时间或显示替代内容，
@@ -37,12 +49,24 @@
   动态文本／尚未注册的运行时字体保留原生准备检查，不能将未测覆盖写成通过。
   确认动态文字、帮助、错误态与目标方向／尺寸下不溢出或缺字；文本明确可用高度及
   换行、裁切或省略策略，并核对实际可见结果。
+  文字、二维码和图标必须归入真实承载卡片／按钮的父容器，使用父容器局部坐标，
+  不把背景卡片与内容做成相互无约束的同级浮层。检查实际渲染边界、内容区／内边距，
+  MAC／长SSID／二维码及多行最后一行均不得越过卡片；提示栏与操作栏分别留区，核对
+  与相邻按钮、标签、遮罩和触区的重叠。结构位置正确不等于真实渲染边界正确。
+  多行总高度以真实字体行框（line_height）与行距测量；line_height 可以大于 fontSize，
+  不能以字号×行数估计正文高度。用同一字体／渲染器核对实际换行和末行，空间不足调整
+  容器／区域或分行分页，不截断必要说明。验证中英文、长名称、空／错误态及多种方向。
   区分字体行盒、基线/leading 与实际字形边界：盒居中不代表文字视觉居中。核对不同文字
   和字号的纵向位置、段落行距；带图标按钮把图标、间隔和字形作为一组检查实际中心，
   不用固定偏移补偿某一段文字。布局与度量方式只用目标已声明能力。
   按目标当前合同处理根容器padding和父容器文字属性继承（font/字号/lineHeight/颜色/对齐），
   不拿fontSize充当行高，不手写y偏移去补基线。支持的单行控件可用ink度量配合clip/ellipsis，
   正文用line度量及明确行距；flex同时核对item与track对齐，图标和文字作为同组content居中。
+  支持时固定正整数高度的 ink 标签可显式使用 labelProps.verticalAlign=start/center/end；
+  先核对目标 label_vertical_align 声明。仅 type=label、metrics=ink 和固定正整数
+  placement.height 合法，不对 line／content／百分比高度套用；省略字段保留原默认。
+  LCD 配色需核对文字／背景／焦点／禁用态对比度，不能只用低对比灰阶或颜色区分状态。
+  图标与字形的实际视觉中心一起核对，不以字体行盒居中代替字形居中。
   已由底层修复的排版/省略号坐标问题，不应重新生成页面绕过补丁。
   图片原生像素尺寸与显示框分别核对，按目标已声明的适配/缩放/裁剪能力放置；未声明时
   在上游预处理，不假设设置框宽高就会缩放图片。图片格式、尺寸、色彩空间、解码峰值
@@ -58,6 +82,10 @@
 - [ ] **输入与可达性**：短按、长按、多击、组合键、触摸/旋转等只使用已声明能力。
   定义时长、去抖、优先级/消费方式，避免同一动作在脚本和规则重复执行。
   操作帮助、首次提示和实际绑定一致；系统 Home/voice/恢复入口始终可达。
+  操作说明用完整动词，完整手势顺序为“单击 → 双击 → 三击 → 长按”；仅列当前需要、
+  已支持的手势即可，完整帮助仍须与当前系统配置和应用绑定一致。空间不足就分行或分页，
+  不压缩成含糊词、不隐藏退出，不为凑顺序而列出不存在的操作。
+
   当前前台应用显式接管 voice_input 时，在同一 VM 处理系统语音按下／释放请求，
   否则进入普通默认语音应用并保留来源应用／页面 context。Home 与 hold 语音各自独立，
   绑定以目标当前声明为准；语音翻页、打开应用或操作控件复用应用合同和有序动作，
@@ -159,3 +187,56 @@ end
 
 未选择交互式显示的应用不必安装触摸或周期时钟；清单约束的是所承诺行为的正确实现。
 新增常见错误应归入相应通用机制和实例，不能为某个 demo 增加内核分支或全局默认策略。
+
+## Consistent interaction and local responsiveness
+
+- Give equal-meaning controls consistent semantic colors within the application (primary action, navigation/back, destructive action, disabled/pending). Do not distinguish actions by color alone. Use the discovered display palette, actual screen dimensions and hit-test geometry, readable labels and reachable controls; never inherit a sample device's fixed pixel layout blindly.
+- Keep deterministic navigation, counters, game rules, cursor/selection and other small computations in the runtime application. A local button must not invoke a Harness just to calculate its immediate result. Use system presentation completion and latest-state coalescing according to the display's declared latency; do not interrupt BUSY or pretend submission means visible completion.
+- For remote work use the system AI API. Read the request-bound typed progress snapshot when a progress notification arrives and on bounded reconnect recovery. Display only true stages and explicitly public commentary; never invent percentages/ETA, expose reasoning, or replace the final result with a generic "completed" page. Input meanings, progress presentation and any per-display update frequency remain ordinary application behavior.
+
+## Final managed-result envelope
+
+Every managed final answer uses the exact top-level discriminator `format`, not
+`version`. Minimal text delivery is a complete envelope:
+
+```json
+{"format":"wishos-result/2","actions":[{"type":"application","recipient":"origin","data":{"text":"回复内容"},"wait":"processed"}]}
+```
+
+Keep any public commentary separate from this final JSON. Do not replace `format`
+with a version label or return only the actions array. Structured protocol errors
+are explicit refusals, not successful text replies. Return system actions only
+for intended declared resource operations and do not pre-execute the same effects.
+
+## Optional spoken replies
+
+Applications choose `input.reply={mode:"text"|"speech",voice?:"voice"}` through
+the system AI API. Speech mode never replaces the text. Return the normal typed
+text message; the user's configured Hub prepares optional TTS media. Do not invent
+audio file paths, repurpose Harness credentials, or have embedded code request a
+model's speech endpoint. The ordinary app may play `wishos-audio/1` using declared
+speaker/file resources, keep the text visible and acknowledge processed delivery
+after playback/cancel. Respect task media lifetime; system cleanup must work when
+the app exits. Handle `audio_error` as a lightweight spoken-reply issue while
+preserving the text, not as failure of the whole conversation. Only offer spoken
+reply controls when a speaker is actually declared. Capability and configuration
+facts, user preferences, UI choices and cloud synthesis have separate owners.
+
+## Narrow labels, focus order and useful help
+
+- Target-declared `label_font_fit:minFontSize` permits an optional integer
+  `labelProps.minFontSize` in8..96 only for label+ink+fixed positive integer numeric
+  placement.width. style.fontSize (including inherited value) is the upper size;
+  min may not exceed that actual upper bound. Native resolves system defaults and
+  actual glyph widths. If still too wide at the lower bound, retain longMode.
+  Omission preserves the normal font. Never treat fit as permission to make every
+  SSID unreadably small: provide a suitable device-specific network layout and a
+  way to see full names. Do not truncate source text to fit.
+- The ordinary navigation module may support config.last (an ordered list of
+  action IDs) to place Back after primary actions. Use it only when the target
+  module supports it. Back and Home remain focusable and reachable; this is
+  application focus order, not a kernel button rule.
+- Help should teach real controls, current focus/selection, entering/exiting each
+  view, voice hold/release, reply mode, network setup and error/retry paths as
+  applicable. A generic one-line gesture hint alone is insufficient for a new
+  user. Do not show unsupported actions or copy another device's bindings.

@@ -1,3 +1,5 @@
+import { TtsConfig } from '../tts.js';
+import { resolveTts } from './tts.js';
 import { ResourceJobs } from '../resource-jobs.js';
 import { HostJobStore } from './job-store.js';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -297,6 +299,7 @@ export class ConnectorServer {
           ttlMs: next.resources.ttlMs,
         },
         speech: resolveSpeech(next.speech, this.secrets).applied,
+        tts: resolveTts(next.tts, this.secrets).service,
       });
       const address = (await candidate.listen(0, '127.0.0.1')) as { port: number };
       if (persist) await this.settings.save(next);
@@ -572,6 +575,10 @@ export class ConnectorServer {
             credential_configured: resolveSpeech(this.config.speech, this.secrets)
               .credentialConfigured,
           },
+          tts: {
+            ...resolveTts(this.config.tts, this.secrets).service.describe(),
+            credential_configured: resolveTts(this.config.tts, this.secrets).credentialConfigured,
+          },
           catalog: runtimeCatalog,
           cloud: { connected: this.relay?.connected ?? false, error: this.relay?.lastError },
           devices: await this.api('/api/devices'),
@@ -663,7 +670,7 @@ export class ConnectorServer {
         reply(res, 200, { reconnecting: true });
         return;
       }
-      const changing = ['runtimes', 'devices', 'cloud', 'speech'].includes(action);
+      const changing = ['runtimes', 'devices', 'cloud', 'speech', 'tts'].includes(action);
       if (changing) {
         if (
           this.changing ||
@@ -677,6 +684,24 @@ export class ConnectorServer {
         this.changing = true;
       }
       try {
+        if (action === 'tts' && req.method === 'POST') {
+          if (!input || Object.keys(input).some((k) => !['settings', 'token'].includes(k)))
+            throw new ApiError(400, 'tts_fields');
+          const tts = TtsConfig.parse(input.settings);
+          if (input.token !== undefined) {
+            if (typeof input.token !== 'string' || !tts.online)
+              throw new ApiError(400, 'tts_token');
+            const ref = 'tts-' + randomUUID();
+            delete tts.online.tokenEnv;
+            if (input.token) {
+              await this.secrets.set(ref, input.token);
+              tts.online.tokenRef = ref;
+            } else delete tts.online.tokenRef;
+          }
+          await this.apply(ConnectorConfig.parse({ ...this.config, tts }));
+          reply(res, 200, { saved: true });
+          return;
+        }
         if (action === 'speech' && req.method === 'POST') {
           if (!input || Object.keys(input).some((k) => !['settings', 'token'].includes(k)))
             throw new ApiError(400, 'speech_fields');

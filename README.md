@@ -1,18 +1,22 @@
 # WishOS Hub
 
-MCP tools, a user-owned Harness connector and a cloud device relay for WishOS.
-This is separate from the [WishOS terminal OS](https://github.com/cccat6/WishOS).
-MIT licensed; the repository and preview releases are currently private.
+WishOS 的 Agent 连接器、MCP 服务与设备中继。运行在你自己的电脑、NAS 或服务器上，
+让设备把语音与任务交给已有 Harness，并接收应用、界面和资源。
 
-## Run
+终端操作系统位于 [WishOS](https://github.com/cccat6/WishOS)。两个仓库通过版本化协议协作：
+WishOS 管理设备运行时和硬件，Hub 管理上位服务、Harness 接入与资源处理。项目采用 MIT 协议。
 
-Download the matching release, extract it and open **WishOS Hub.command** (macOS),
-**WishOS Hub.cmd** (Windows), or run **./wishos-hub setup** (Linux). The release
-includes Node.js and production dependencies. No Docker, Python or local model is
-needed for the connector. The browser wizard manages devices, runtime bindings,
-MCP configuration, cloud pairing, online speech recognition and task recovery.
+## 开始使用
 
-From source, use Node.js 24.22.0:
+从 [Releases](https://github.com/cccat6/WishOS-Hub/releases) 下载适合系统的安装包，
+解压后打开 macOS 的 **WishOS Hub.command**、Windows 的 **WishOS Hub.cmd**，
+或在 Linux 运行 `./wishos-hub setup`。安装包包含对应平台的 Node.js 与运行依赖。
+
+网页向导默认位于 `http://127.0.0.1:18762/`。按向导添加设备、选择运行器与会话，
+再把生成的 MCP 配置交给 Agent。设备与电脑在同一局域网时可直接通信；启用中继后，
+两端通过向外建立的连接协作，通常无需固定 DHCP 地址或设置路由器端口转发。
+
+从源码运行需要 Node.js **24.22.0**：
 
 ```sh
 npm ci
@@ -20,15 +24,8 @@ npm run build
 npm run launch
 ```
 
-The same TypeScript/JavaScript source runs on each supported OS. Platform releases
-bundle the matching Node executable and Sharp's native image library; this is
-packaging and startup validation, not separate business implementations. Source
-users install Node and run the commands above without building C++ themselves.
-The Lua preflight parser is one portable WASM artifact shared with cloud Workers.
-
-The default setup UI is `http://127.0.0.1:18762/`. Use `--port` for a different
-port; leave an existing unrelated service alone. The local setup UI is loopback
-only. Device WS accepts a separate per-device pairing grant on the LAN listener.
+同一套 TypeScript/JavaScript 实现运行于支持的平台。安装包按平台携带 Node 可执行文件
+和 Sharp 原生图像库，Lua 预检使用共用的 WASM 编译器。
 
 ```sh
 node dist/connect/cli.js setup --port 18763
@@ -38,93 +35,50 @@ node dist/connect/cli.js export --client codex
 node dist/connect/cli.js --stdio
 ```
 
-Use `--data-dir PATH` or `WISHOS_HOME` to select independent installations. The
-stdio entry starts/reuses a connector and writes only MCP protocol to stdout.
-Stop a foreground connector with Ctrl-C, or use `wishos-hub stop` for the
-background connector. Existing settings survive an upgrade;
-replace the extracted program, not the data directory.
+用 `--data-dir PATH` 或 `WISHOS_HOME` 选择独立数据目录。升级时替换程序目录并保留数据目录。
+本机网页管理设置、运行器、配对、语音服务及任务恢复。
 
-## Two directions, one tool contract
+## 连接已有 Agent
 
-An Agent calls **WishOS MCP** to discover devices, inspect resource contracts,
-invoke system services and stage/deliver assets. Standard MCP does not give a
-device permission to start a conversation in every client.
+MCP 提供设备发现、能力查询、系统调用、资源暂存与应用交付。
+设备发起任务时，Hub 通过所选 Harness 的会话入口提交；Harness 持有推理、工具、授权和历史。
+MCP 连接本身与 Agent 对话会话是两种独立的状态。
 
-For a device-triggered request, the connector submits to a configured runtime's
-own session interface. That runtime performs reasoning and uses WishOS MCP when
-it needs the device. Sessions and model credentials remain in that runtime.
-
-| Runtime | Device-trigger adapter in this preview | Session boundary |
+| 运行器 | 当前接入入口 | 会话范围 |
 | --- | --- | --- |
-| Codex | Official app-server | Native thread; native active-turn steer |
-| Claude Code | Official headless CLI | New/resumed controlled session; not an attached live TUI |
-| DeepSeek Harness | Official ACP profile | Persistent ACP session via `session/resume` |
-| Cursor | CLI ACP | CLI session via `session/load`; not editor-chat takeover |
-| WorkBuddy | Authorized Open API task ACP | Bind existing task ID; user developer-app authorization required |
-| OpenClaw | Opt-in Gateway OpenResponses | Explicit Gateway session key |
-| Hermes Agent | API Server Runs | API-owned session; foreign CLI/TUI sessions are refused |
-| ChatGPT | Remote MCP tools | ChatGPT owns the chat; no arbitrary reverse-trigger API |
+| Codex | App Server | 已有或新建线程，支持运行中 steer |
+| Claude Code | Headless CLI | 受控的新建／恢复会话 |
+| DeepSeek Harness | ACP | 运行器支持的持久会话恢复 |
+| Cursor | CLI ACP | CLI 会话 |
+| WorkBuddy | 获授权 Open API／ACP | 用户授权的任务会话 |
+| OpenClaw | 启用的 Gateway OpenResponses | 明确的 Gateway session key |
+| Hermes Agent | API Server Runs | API 所属会话 |
+| ChatGPT | 远程 MCP 工具 | ChatGPT 管理的对话；设备反向发起需另有明确入口 |
 
-The same MCP tools work through stdio or authenticated HTTPS. A configured
-adapter is not proof a particular vendor account has authorized it. See
-[the researched integration matrix](docs/integration-architecture.md) for primary
-sources and alternate surfaces, including Claude Channels and vendor cloud APIs.
-These alternates are not advertised as implemented adapters in this preview.
+接入能力取决于运行器版本、用户授权和实际提供的接口。Codex 已有真实端云验收，其他适配器
+具有协议／行为测试，各自账号与环境仍需验证。具体接口、前置条件与官方文档见
+[接入架构](docs/integration-architecture.md)。
 
-Users who prefer model APIs run their own existing runner such as OpenClaw or
-Hermes. WishOS does not introduce a hosted model-key/session service. These
-runners already handle provider-specific APIs, tools and history.
+希望直连模型 API 的用户可自行部署 OpenClaw、Hermes 等已有 runner，由其管理密钥、
+工具循环与会话。WishOS 公共中继处理配对和转发；模型密钥与权威会话历史留在用户选择的环境。
 
-## LAN and Internet
+## 语音、界面与应用
 
-A paired device receives ordered `/services/link` endpoints: a stable `.local`
-connector hostname first and outbound WSS relay second. mDNS avoids a fixed DHCP
-lease. No inbound router port or UPnP is required. Existing explicit proxy bypass
-rules must retain `.local` or the selected LAN hostname.
+- 语音以独立可解码的压缩块传输。识别可使用已支持的 Harness 原生入口，或用户自己的在线 ASR。
+- 回复可选文字或语音，语音同时保留文字。用户主机可配置 macOS 内置语音或在线兼容 TTS；
+  凭据通过本机密钥存储或环境引用配置。临时回复媒体只选择设备策略允许的 RAM 目标。
+- 请求进度按 boot／request／sequence 绑定，传递真实阶段与明确公开的 commentary。
+- Agent 按设备声明的显示、输入、字体、存储与预算生成运行时应用。出厂套装与用户应用使用相同接口。
+  首批终端支持 **LCKFB-SZPI-ESP32-S3-VA** 与 **Xingzhi Cube 1.54 TFT 单键成品**；
+  其他硬件的能力由 WishOS 设备包决定。
+- 资源通过暂存、预检、哈希和分块交付。应用使用完整不可变版本更新；验证、安装、启动、
+  实际呈现分别有回执。连接丢失时先协调既有请求身份，保留结果不明的变更。
 
-A **local** connector uses the LAN route when reachable. A cloud-executed MCP
-client reaches the cloud relay; a browser on the same Wi-Fi cannot make that
-remote execution local. A local Harness still needs its host online. Pairing and
-MCP OAuth grants are WishOS credentials, not model-provider credentials.
+[组件指导](skills/wishos/SKILL.md) · [应用检查单](skills/wishos-applications/references/authoring-checklist.md)
+· [公开进度](docs/request-progress-contract.md) · [语音回复](docs/reply-audio-contract.md)
+· [输入与排版](docs/input-layout-authoring.md)
 
-Cloud deployment instructions: [cloud deployment](docs/cloud-deployment.md).
-Current release/deployment evidence: [release notes](docs/release-notes.md).
-
-## Resources, speech and recovery
-
-- Tools discover capabilities before assuming geometry, color spaces, pins,
-  completion timing or storage. Native display encodings belong to drivers.
-- `stage_resource` starts a job. Poll `read_resource_job` for its artifact ID.
-  `prepare_image` runs on the user's host and crops/scales to explicit geometry;
-  optional palette indices use the caller's discovered palette. `deliver_resources`
-  streams a verified bundle according to the terminal's storage policy. Delivery
-  is not application activation or physical display completion.
-- Cloud temporary assets are scoped to an installation: 16 MiB per file,
-  64 MiB reserved/ready total, one-hour expiry. These are deployment limits, not
-  WishOS hardware limits. Large/private resources can stay on the user's host.
-  Host cache limits are configured in connector.json resources (file/total bytes
-  and TTL); staging reclaims expired/unleased assets and abandoned partial files.
-  Image conversion requires the host; simple UI descriptions and prepared binary
-  resources can be staged on cloud MCP without it.
-- Voice transport uses independently decodable compressed blocks. ASR is an
-  independent configured capability: runtime-native when supported, otherwise
-  the user's online ASR endpoint. This preview downloads no recognition models.
-- Mutation tools require `request_id` and current `expected_boot_id`. A lost
-  response does not cause automatic mutation replay on another route. Inspect
-  `read_operation` and native completion resources. The local recovery page lists
-  unresolved native/Harness outcomes and permits explicit owner reconciliation.
-- `wishos-result/2` is an ordered application/system action sequence, not a
-  fixed target mode. Receiver processing ACKs, application replacement and native
-  BUSY completion belong to the terminal. See [device contract](docs/device-link-contract.md).
-
-The user data directory contains private config, scoped local secrets, host-side
-receipts and explicitly staged resources. Model credentials remain with the
-runtime. Public cloud stores pairing/auth state, bounded receipts and explicitly
-staged temporary files; it does not store authoritative conversation history.
-Prompts/audio/provider credentials are not written to cloud logs. TLS terminates
-at relay endpoints; this is not a claim of end-to-end encryption.
-
-## Development and validation
+## 部署与开发
 
 ```sh
 npm test
@@ -133,66 +87,21 @@ npm run cloud:bundle
 npm run package:release
 ```
 
-The product build and tests require Node.js only. Internal Python/font research
-files remain outside the product entrypoints, CI and release payload; they are not
-a WishOS or Hub dependency. Firmware and physical-device tests live in the terminal repository.
-Host fixtures verify protocol and fault behavior, not live vendor authorization
-or physical panel output. See [validation](docs/validation.md).
+[云端部署](docs/cloud-deployment.md)说明如何在自己的 Cloudflare 账号部署配对、OAuth、MCP 和中继。
+执行端是本机时可优先走局域网；云端执行的 MCP 请求通过对应中继路由。局域网可达性由真正
+执行请求的连接器判断。
 
-### Runtime package preparation
+[验证说明](docs/validation.md)区分 Host 测试、目标构建、真实 Harness 与设备呈现验收。
+[设备链路](docs/device-link-contract.md)、[会话控制](docs/session-control-contract.md)、
+[包交付](docs/package-contract-proposal.md)说明版本化接口。
 
-MCP exposes component/skill resources at `wishos://guidance/components`, a
-`wishos-authoring` prompt and the `get_guidance` fallback tool. Device-selected
-components come from `get_device_components` and live capability discovery; a
-static guide does not imply that a peripheral exists. References are bundled from
-a pinned WishOS git commit with per-file digests.
+贡献新的接入适配器时，声明实际能力，保留请求身份、完成回执与资源释放语义，并补相应行为测试。
+终端驱动、设备接线和出厂 UI 的贡献请提交到 WishOS 仓库。
 
-Creation and modification share an [authoring checklist](skills/wishos-applications/references/authoring-checklist.md).
-MCP initialization, the authoring prompt, discovery replies and every managed
-text/voice request carry its entry; `get_guidance {component_id:"application-checklist"}`
-reads it without resource browsing or a locally installed Skill. Detailed guidance
-is loaded on demand. This is upstream authoring guidance, not a firmware policy or
-proof that a model followed it. Record applicable review evidence, and distinguish
-static preflight, installation, activation, presentation and behavioral validation.
+## 数据与许可
 
-`prepare_package` constructs a complete sorted inventory, `preflight_bundle`
-checks it without device writes, `deploy_package` delivers and awaits native
-validation/install, and `update_package` makes immutable whole-file revisions.
-All are jobs observed through `read_resource_job`. Source errors are returned with
-file/line diagnostics from the stock Lua 5.4.8 compile-only WASM parser; no Lua
-application is executed by preflight. Host and Workers use the same compiler
-profile and compare declared target limits.
+用户主机保存本机配置、授权引用、回执和显式暂存的资源。公开中继保存配对、范围受限的授权、
+有界交付回执及临时资源。诊断输出避免包含语音、提示词、密钥和用户文件内容。
+TLS 在服务端端点终止，部署时请按实际网络与信任边界配置。
 
-Inventory kind is optional: `lua`, `json` or `asset`. Lua stays code regardless of
-an asset label. Known controls are parsed; large JSON data explicitly marked
-asset remains a streamed/hash-checked resource. Schema-only UI validation accepts
-future runtime font bindings; actual native rendering and allocation admission
-remain separate. Ordinary media storage is not application installation.
-
-Updates send complete changed files and copy unchanged assets locally. Complete
-preflight still reads unchanged Lua/JSON controls from the device; it does not
-read large unchanged binary assets back to the host. Native copying verifies
-their expected digest. Books/history stay outside app revisions. Old revisions
-remain until explicit removal and never receive line patches. A lost mutation
-reply requires receipt reconciliation rather than blind re-execution.
-
-For a deliberate interruption during deployment, deploy_package/update_package
-also accept `stop_current_before_transfer:true` with `activate:true`. The default
-is false. Hub completes static and boot/revision checks first, records the explicit
-runtime stop, then performs preparation/transfer. Failure may leave that runtime
-stopped or a new revision installed; consult receipts. No implicit retry, automatic
-restoration or reduction of native resource protections occurs.
-
-Application storage has device-package defaults and a runtime-configurable system
-policy; it is not inferred from MCU or Flash size.
-Read `/sys/apps` metadata `install_providers` (array, legacy CSV) and `factory_launcher`.
-System `configure` can change allowed providers; an empty array disables user installs.
-Transfer targets and quotas are separate configuration. The initial
-Launcher is an ordinary directory package; user apps and replacement launchers use
-allowed providers and versioned updates. Writability and fallback paths come from
-the device contract rather than a Hub hardcoded policy. Download targets, priority, explicit Flash fallback and quotas
-remain `/sys/transfers` policy. Ordinary media delivery is not app installation.
-
-The working-tree audit and its remaining integration checks are in
-[full-audit.md](docs/full-audit.md). Published preview evidence describes its pinned
-release source, not later uncommitted changes.
+本仓库采用 [MIT](LICENSE)。[第三方许可](THIRD_PARTY_NOTICES.md)列出随包依赖与固定参考的许可来源。

@@ -30,6 +30,8 @@ export async function preflightUi(
           styles: builtInStyles + ',lineHeight',
           label_metrics: 'line,ink',
           label_overflow: 'wrap,clip,ellipsis',
+          label_vertical_align: 'start,center,end',
+          label_font_fit: 'minFontSize',
           image_fit: 'none,contain,cover',
           flex_alignment: 'start,center,end',
           ...options.capabilities,
@@ -175,6 +177,16 @@ export async function preflightUi(
       throw new PreflightError('ui_layout_not_supported', { file: context });
     for (const key of ['mainAlign', 'crossAlign'])
       choice(layout[key], 'flex_alignment', 'start', 'ui_flex_alignment', context);
+    if (
+      node.labelProps &&
+      Object.keys(node.labelProps).some(
+        (key) =>
+          !['text', 'missingGlyph', 'longMode', 'metrics', 'verticalAlign', 'minFontSize'].includes(
+            key,
+          ),
+      )
+    )
+      throw new PreflightError('ui_label_property', { file: context });
     if (node.labelProps?.text !== undefined && typeof node.labelProps.text !== 'string')
       throw new PreflightError('ui_label_text', { file: context });
     if (
@@ -225,6 +237,50 @@ export async function preflightUi(
       throw new PreflightError('ui_missing_glyph_policy', { file: context });
     choice(node.labelProps?.metrics, 'label_metrics', 'line', 'ui_label_metrics', context);
     choice(node.labelProps?.longMode, 'label_overflow', 'wrap', 'ui_label_long_mode', context);
+    if (node.labelProps?.verticalAlign !== undefined) {
+      if (!['start', 'center', 'end'].includes(node.labelProps.verticalAlign))
+        throw new PreflightError('ui_label_vertical_align', { file: context });
+      choice(
+        node.labelProps.verticalAlign,
+        'label_vertical_align',
+        '',
+        'ui_label_vertical_align',
+        context,
+      );
+      if (
+        node.type !== 'label' ||
+        node.labelProps.metrics !== 'ink' ||
+        !Number.isInteger(node.placement?.height) ||
+        node.placement.height <= 0
+      )
+        throw new PreflightError('ui_label_vertical_align_geometry', { file: context });
+    }
+
+    if (node.labelProps?.minFontSize !== undefined) {
+      choice('minFontSize', 'label_font_fit', '', 'ui_label_font_fit', context);
+      const min = node.labelProps.minFontSize;
+      if (
+        node.type !== 'label' ||
+        node.labelProps.metrics !== 'ink' ||
+        !Number.isInteger(node.placement?.width) ||
+        node.placement.width <= 0 ||
+        !Number.isInteger(min) ||
+        min < 8 ||
+        min > 96
+      )
+        throw new PreflightError('ui_label_font_fit_geometry', { file: context });
+      if (typography.fontSize !== undefined) {
+        const raw = typography.fontSize;
+        const max =
+          typeof raw === 'number'
+            ? raw
+            : typeof raw === 'string' && /^[-+]?\d+(dp|sp)?$/.test(raw)
+              ? parseInt(raw, 10)
+              : NaN;
+        if (!Number.isInteger(max) || min > max)
+          throw new PreflightError('ui_label_font_fit_range', { file: context });
+      }
+    }
     choice(node.imageProps?.fit, 'image_fit', 'none', 'ui_image_fit', context);
     if (
       node.qrcodeProps !== undefined &&

@@ -305,11 +305,15 @@ test('compressed managed voice preserves frozen current/origin/intent context an
           entry: '/apps/clock/main.lua',
         },
       },
-      application: { intent: { effect: 'application_update', target_context: 'launch_origin' } },
+      application: {
+        intent: { effect: 'application_update', target_context: 'launch_origin' },
+        reply: { mode: 'speech', voice: 'Tingting', future_hint: { style: 'short' } },
+      },
     };
     await t.start('context-one', {
       managed_request: true,
       managed_request_id: 'outer-one',
+      reply: context.application.reply,
       request_context: context,
       request_scope: 'instance-7',
     });

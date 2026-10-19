@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { MockAdapter } from '../src/adapters/mock.js';
+import { MockAdapter } from './helpers/mock-adapter.js';
 import { SessionControl, type SessionBinding } from '../src/session-control.js';
 import type { HarnessSession, HarnessMessage } from '../src/adapters/sessions.js';
 import { managedText } from '../src/os-agent.js';

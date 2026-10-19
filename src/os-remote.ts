@@ -1,3 +1,4 @@
+import { RemoteProgress, type PublicProgress } from './os-progress.js';
 import { canonicalValue } from './control-receipts.js';
 /** Portable transport bridge. Handlers are upstream service adapters; device apps use the managed system APIs. */
 import { createHash } from 'node:crypto';
@@ -7,6 +8,7 @@ export type RemoteRequest = {
   request_id: string;
   boot_id?: string;
   observed_at_ms?: number;
+  reportProgress?: (progress: PublicProgress) => void;
   route: string;
   payload: Record<string, unknown>;
 };
@@ -48,6 +50,7 @@ export class OsRemoteBridge {
   private boot?: string;
   private journal: RemoteJournal;
   private capacity: number;
+  private progress: RemoteProgress;
   private listing?: boolean;
   get pendingCount() {
     return this.tasks.size;
@@ -58,8 +61,10 @@ export class OsRemoteBridge {
   constructor(
     private rpc: DeviceRpc,
     private handlers: Readonly<Record<string, RemoteHandler>>,
-    options: { journal?: RemoteJournal; maxInFlight?: number } = {},
+    options: { journal?: RemoteJournal; maxInFlight?: number; progress?: RemoteProgress } = {},
   ) {
+    this.progress = options.progress ?? new RemoteProgress();
+    this.progress.reconnect();
     this.journal = options.journal ?? new MemoryRemoteJournal();
     this.capacity = options.maxInFlight ?? 4;
     if (!Number.isInteger(this.capacity) || this.capacity < 1) throw Error('remote_concurrency');
@@ -221,6 +226,10 @@ export class OsRemoteBridge {
           request.request_id = key;
           request.boot_id = peek.boot_id;
           request.observed_at_ms = Date.now();
+          request.reportProgress = (p) => {
+            if (!this.closed && !task?.abort.signal.aborted && task?.state !== 'ready')
+              this.progress.update(request, p);
+          };
           task = {
             boot: peek.boot_id,
             request,
@@ -246,9 +255,17 @@ export class OsRemoteBridge {
       for (const [id, task] of this.tasks) {
         if (!seen.has(id) && task.state !== 'ready') {
           task.abort.abort(Error('request_retired'));
+          this.progress.retire(task.request);
           this.tasks.delete(id);
           continue;
         }
+        await this.progress.flush(
+          task.request,
+          this.rpc,
+          task.state === 'ready',
+          () => !this.closed && !signal.aborted && !task.abort.signal.aborted,
+        );
+        if (this.closed || signal.aborted || task.abort.signal.aborted) return;
         if (task.state !== 'ready') continue;
         const done = await this.rpc('/services/remote', 'complete', {
           id,
@@ -269,6 +286,7 @@ export class OsRemoteBridge {
         }
         if (this.closed || signal.aborted) return;
         if (task.journalled) this.journal.acknowledge(task.request.request_id);
+        this.progress.retire(task.request);
         this.tasks.delete(id);
       }
     } finally {

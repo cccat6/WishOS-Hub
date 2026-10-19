@@ -2,8 +2,9 @@ import type { NativeSpeech } from '../voice.js';
 import type { HarnessUsage } from './usage.js';
 import type { HarnessSession, HarnessMessage, HarnessPage } from './sessions.js';
 export interface AgentEvent {
-  type: 'text' | 'status' | 'approval';
+  type: 'text' | 'status' | 'approval' | 'public_progress';
   text?: string;
+  stage?: string;
   requestId?: string;
   request?: unknown;
 }
@@ -15,6 +16,7 @@ export interface HarnessAdapter {
     approval: boolean;
     usage?: boolean;
     steer?: boolean;
+    publicProgress?: boolean;
   };
   readUsage?(session?: string): Promise<HarnessUsage>;
   readTools?(session: string): Promise<unknown>;

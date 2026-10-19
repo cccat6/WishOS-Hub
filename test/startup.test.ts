@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { once } from 'node:events';
 test('public Node entrypoint starts outside checkout, serves setup and stops by its own identity', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wishos-startup-')),
-    entry = fileURLToPath(new URL('../dist/connect/cli.js', import.meta.url)),
+    entry = process.env.WISHOS_TEST_ENTRY ?? fileURLToPath(new URL('../dist/connect/cli.js', import.meta.url)),
     child = spawn(
       process.execPath,
       [entry, 'serve', '--data-dir', root, '--host', '127.0.0.1', '--port', '0', '--no-browser'],
@@ -19,7 +19,8 @@ test('public Node entrypoint starts outside checkout, serves setup and stops by 
   child.stderr.on('data', (b) => (errors += b));
   try {
     let info: any;
-    for (let i = 0; i < 200; i++) {
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
       if (child.exitCode !== null) throw Error('startup exited: ' + errors);
       try {
         info = JSON.parse(await readFile(join(root, 'running.json'), 'utf8'));
@@ -71,7 +72,7 @@ test('stdio auto-starts a user connector, keeps stdout protocol-only and preserv
   });
   await new Promise<void>((r) => proxy.listen(0, '127.0.0.1', r));
   const root = await mkdtemp(join(tmpdir(), 'wishos-stdio-')),
-    entry = fileURLToPath(new URL('../dist/connect/cli.js', import.meta.url)),
+    entry = process.env.WISHOS_TEST_ENTRY ?? fileURLToPath(new URL('../dist/connect/cli.js', import.meta.url)),
     settings = new ConfigStore(root),
     config = await settings.load();
   await settings.save({ ...config, host: '127.0.0.1', port: 0, mdns: false });

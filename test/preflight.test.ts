@@ -1620,3 +1620,122 @@ test('UI preflight preserves omitted defaults and inherited font aliases instead
     /ui_system_font_size/,
   );
 });
+
+test('optional ink vertical alignment requires advertised target support and fixed positive integer label height', async () => {
+  const { preflightUi } = await import('../src/preflight-ui.js');
+  const page = (value: any = 'center', height: any = 32, metrics = 'ink', type = 'label') => ({
+    version: '0.1.1',
+    assets: [
+      {
+        type: 'viewScreen',
+        children: [
+          {
+            type,
+            placement: { height },
+            labelProps: { text: '对齐', metrics, verticalAlign: value },
+          },
+        ],
+      },
+    ],
+  });
+  const check = (doc: any, targetBound: boolean, capabilities: any = {}) =>
+    preflightUi('ui.json', doc, {
+      targetBound,
+      capabilities: {
+        nodes: 'viewScreen,label,button',
+        label_metrics: 'line,ink',
+        ...capabilities,
+      },
+      reference: async () => {
+        throw Error('unexpected resource');
+      },
+      document: async () => {
+        throw Error('unexpected resource');
+      },
+      fileBytes: () => undefined,
+    });
+  for (const value of ['start', 'center', 'end']) {
+    assert((await check(page(value), false)).schema_valid);
+    assert(
+      (await check(page(value), true, { label_vertical_align: 'start,center,end' })).schema_valid,
+    );
+  }
+  await assert.rejects(check(page(), true), /ui_label_vertical_align/);
+  for (const invalid of ['baseline', '', null, 0, false]) {
+    await assert.rejects(check(page(invalid), false), /ui_label_vertical_align/);
+    await assert.rejects(check(page(invalid), true), /ui_label_vertical_align/);
+  }
+  for (const height of [undefined, 0, -1, 1.5, '32', 'content', '100%']) {
+    const doc = page();
+    if (height === undefined) delete doc.assets[0].children[0].placement.height;
+    else doc.assets[0].children[0].placement.height = height;
+    await assert.rejects(check(doc, false), /ui_label_vertical_align_geometry/);
+  }
+  await assert.rejects(
+    check(page('center', 32, 'line'), false),
+    /ui_label_vertical_align_geometry/,
+  );
+  await assert.rejects(
+    check(page('center', 32, 'ink', 'button'), false),
+    /ui_label_vertical_align_geometry/,
+  );
+  const unknown = page();
+  (unknown.assets[0].children[0].labelProps as any).verticalAlignment = 'center';
+  await assert.rejects(check(unknown, false), /ui_label_property/);
+  const legacy = page();
+  delete legacy.assets[0].children[0].labelProps.verticalAlign;
+  assert((await check(legacy, true)).schema_valid);
+});
+
+test('optional ink font fit requires target declaration and bounded fixed-width geometry, honoring inherited upper font size', async () => {
+  const { preflightUi } = await import('../src/preflight-ui.js');
+  const page = (min: any = 12, width: any = 100, metrics = 'ink', type = 'label') => ({
+    version: '0.1.1',
+    assets: [
+      {
+        type: 'viewScreen',
+        style: { fontSize: 24 },
+        children: [
+          {
+            type,
+            placement: { width },
+            labelProps: { text: 'Long SSID 名称', metrics, minFontSize: min },
+          },
+        ],
+      },
+    ],
+  });
+  const check = (doc: any, targetBound = false, extra: any = {}) =>
+    preflightUi('ui.json', doc, {
+      targetBound,
+      capabilities: {
+        nodes: 'viewScreen,label,button',
+        styles: 'fontSize',
+        label_metrics: 'line,ink',
+        ...extra,
+      },
+      reference: async () => {
+        throw Error('unexpected');
+      },
+      document: async () => {
+        throw Error('unexpected');
+      },
+      fileBytes: () => undefined,
+    });
+  assert((await check(page())).schema_valid);
+  assert((await check(page(24), true, { label_font_fit: 'minFontSize' })).schema_valid);
+  await assert.rejects(check(page(), true), /ui_label_font_fit/);
+  for (const min of [0, 7, 97, 12.5, '12', null])
+    await assert.rejects(check(page(min)), /ui_label_font_fit_geometry/);
+  for (const width of [0, -1, 12.5, 'content', '100%', '100'])
+    await assert.rejects(check(page(12, width)), /ui_label_font_fit_geometry/);
+  await assert.rejects(check(page(25)), /ui_label_font_fit_range/);
+  await assert.rejects(check(page(12, 100, 'line')), /ui_label_font_fit_geometry/);
+  await assert.rejects(check(page(12, 100, 'ink', 'button')), /ui_label_font_fit_geometry/);
+  const unknown = page();
+  delete unknown.assets[0].style.fontSize;
+  assert((await check(unknown)).schema_valid);
+  const legacy = page();
+  delete legacy.assets[0].children[0].labelProps.minFontSize;
+  assert((await check(legacy, true)).schema_valid);
+});

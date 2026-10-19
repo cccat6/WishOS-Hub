@@ -21,6 +21,7 @@ function fixture(
     batchUnsupported?: boolean;
     malformedBatch?: boolean;
     ingressBatch?: number;
+    reply?: Record<string, unknown>;
   } = {},
 ) {
   const db = new DatabaseSync(':memory:');
@@ -28,7 +29,10 @@ function fixture(
     apiActions: string[] = [];
   const ingress = new OsAudioIngress(
     db,
-    async () => ({ run_id: 'native-run' }),
+    async (_device, _id, _wav, config) => {
+      if (options.reply) assert.deepEqual(config.reply, options.reply);
+      return { run_id: 'native-run' };
+    },
     options.ingressBatch ? { batch_blocks: options.ingressBatch } : {},
   );
   const received = new Set<number>(),
@@ -163,7 +167,7 @@ function fixture(
         request_id: 'request',
         boot_id: 'b',
         route: 'voice',
-        payload: { recording_id: 'recording' },
+        payload: { recording_id: 'recording', ...(options.reply ? { reply: options.reply } : {}) },
       },
       controller.signal,
     );
@@ -477,4 +481,17 @@ test('unrecognized batch declarations and transient capability failures do not a
     signal,
   );
   assert.equal(methods.at(-1), 'read_chunk');
+});
+
+test('voice collector forwards opaque reply preferences through durable ingress and ASR admission', async () => {
+  const f = fixture({
+    totalBlocks: 20,
+    reply: { mode: 'speech', voice: 'Tingting', future_hint: { style: 'short' } },
+  });
+  try {
+    const r: any = await f.run();
+    assert.equal(r.run_id, 'native-run');
+  } finally {
+    await f.close();
+  }
 });

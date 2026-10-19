@@ -33,6 +33,7 @@ export type AudioConfig = {
   managed_request_id?: string;
   request_context?: Record<string, unknown>;
   request_scope?: string;
+  reply?: Record<string, unknown>;
 };
 export type AudioFinal = { produced_samples: string; capture_failed: boolean };
 export type AudioReceipt = Record<string, unknown>;
@@ -128,6 +129,7 @@ export class OsAudioIngress {
           'managed_request_id',
           'request_context',
           'request_scope',
+          'reply',
         ].includes(key)
       )
         throw new AudioError('audio_configuration_field');
@@ -176,6 +178,11 @@ export class OsAudioIngress {
           /[\r\n\0]/.test(value[key]!))
       )
         throw new AudioError('audio_request_identity');
+    if (
+      value.reply !== undefined &&
+      (!value.reply || typeof value.reply !== 'object' || Array.isArray(value.reply))
+    )
+      throw new AudioError('audio_reply_policy');
     return canonicalValue(JSON.parse(JSON.stringify(value)));
   }
   begin(device: string, id: string, config: AudioConfig) {

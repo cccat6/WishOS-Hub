@@ -7,7 +7,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { Hub } from '../src/hub.js';
 import { Store } from '../src/store.js';
-import { MockAdapter } from '../src/adapters/mock.js';
+import { MockAdapter } from './helpers/mock-adapter.js';
 const pause = () => new Promise<void>((r) => setTimeout(r, 10));
 const until = async (check: () => boolean) => {
   for (let i = 0; i < 600; i++) {

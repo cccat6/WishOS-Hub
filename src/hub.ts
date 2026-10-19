@@ -1,3 +1,5 @@
+import { TtsService } from './tts.js';
+import { RemoteProgress, boundedMessage, type PublicProgress } from './os-progress.js';
 import { dispatchPause, type DispatchRecovery } from './dispatch-recovery.js';
 import { ResourceJobs } from './resource-jobs.js';
 import { HostJobStore } from './connect/job-store.js';
@@ -49,6 +51,7 @@ export interface HubOptions {
   store: Store;
   asr?: Asr;
   speech?: unknown;
+  tts?: TtsService;
   audioLimits?: Partial<typeof AudioLimits>;
   remotePolling?: { intervalMs: number; maxPauseMs: number };
   artifactRoot?: string;
@@ -136,6 +139,9 @@ export class Hub {
   private artifacts: ArtifactStore;
   readonly resourceJobs: ResourceJobs;
   private osVoiceBindings = new Map<string, VoiceLane>();
+  private remoteProgress = new Map<string, RemoteProgress>();
+  private requestProgress = new Map<string, (p: PublicProgress) => void>();
+  private runProgress = new Map<string, PublicProgress>();
   private audioDelivery = new Map<string, AudioDeliveryProgress>();
   private approvals = new Map<
     string,
@@ -399,6 +405,16 @@ export class Hub {
     const handlers: Record<string, RemoteHandler> = { agent, voice };
     handlers['wishos.ai'] = managedAgentRoute({
       rpc: bound,
+      tts: this.options.tts,
+      bindProgress: (r) => {
+        const key = d.id + ':' + r.request_id;
+        const report = (p: PublicProgress) => r.reportProgress?.(p);
+        this.requestProgress.set(key, report);
+        return () => {
+          if (this.requestProgress.get(key) === report) this.requestProgress.delete(key);
+        };
+      },
+      readProgress: (id) => this.runProgress.get(id),
       artifacts: this.artifacts,
       voice: handlers.voice,
       start: (r, text) =>
@@ -438,7 +454,10 @@ export class Hub {
         await d.adapter.interrupt?.(run.resolved_session);
       },
     });
+    let progress = this.remoteProgress.get(d.id);
+    if (!progress) this.remoteProgress.set(d.id, (progress = new RemoteProgress()));
     const bridge = new OsRemoteBridge(bound, handlers, {
+        progress,
         journal: new SqlRemoteJournal(this.options.store.db, d.id),
       }),
       abort = new AbortController();
@@ -497,6 +516,7 @@ export class Hub {
       boot_id: p?.boot ?? null,
       harness: d.adapter.name,
       speech: this.speech.describe(d.adapter),
+      tts: this.options.tts?.describe() ?? { available: false, source: 'disabled' },
       session_id: this.defaultSession(d) ?? null,
       harness_capabilities: d.adapter.capabilities,
       active_run: this.busy.get(id) ?? null,
@@ -556,13 +576,27 @@ export class Hub {
     if (lane.sessionReady) lane.sessionId = await lane.sessionReady;
     const recognizer = this.speech.capture(d.adapter, lane.sessionId, signal);
     if (!recognizer) throw Error('speech_unavailable');
+    if (config.managed_request_id)
+      this.requestProgress.get(id + ':' + config.managed_request_id)?.({ stage: 'transcribing' });
     const text = await recognizer.transcribe(wav, signal);
+    if (config.managed_request_id)
+      this.requestProgress.get(id + ':' + config.managed_request_id)?.({ stage: 'received' });
     if (this.stopping) throw Error('hub_stopping');
     const result = await this.submitVoice(
       id,
       voiceId,
       config.managed_request
-        ? managedText(config.managed_request_id ?? voiceId, text, config.request_context ?? {})
+        ? managedText(config.managed_request_id ?? voiceId, text, {
+            ...(config.request_context ?? {}),
+            ...(config.reply !== undefined
+              ? {
+                  application: {
+                    ...((config.request_context?.application ?? {}) as Record<string, unknown>),
+                    reply: config.reply,
+                  },
+                }
+              : {}),
+          })
         : text,
       lane,
     );
@@ -604,6 +638,7 @@ export class Hub {
           'managed_request_id',
           'request_context',
           'request_scope',
+          'reply',
         ].includes(key)
       )
         throw new HttpError(400, 'audio_configuration_field');
@@ -733,6 +768,15 @@ export class Hub {
     };
     this.foreground.set(id, foreground);
     const emit = (e: AgentEvent) => {
+      if (e.type === 'public_progress' || (e.type === 'status' && e.stage === 'running')) {
+        if (!this.runProgress.has(run.id) && this.runProgress.size >= 64)
+          this.runProgress.delete(this.runProgress.keys().next().value!);
+        this.runProgress.set(run.id, {
+          stage: 'executing',
+          source: 'harness',
+          ...(e.type === 'public_progress' ? { text: boundedMessage(e.text ?? '') } : {}),
+        });
+      }
       if (e.type === 'approval' && e.requestId) {
         const key = randomUUID();
         this.approvals.set(key, {
@@ -797,6 +841,7 @@ export class Hub {
         deployment: 'user-host',
         resources: {
           imagePreparation: true,
+          replySpeech: this.options.tts?.describe() ?? { available: false, source: 'disabled' },
           staging: true,
           delivery: true,
           packagePreflight: true,
@@ -946,7 +991,10 @@ export class Hub {
     if (m && req.method === 'GET') {
       const r = this.options.store.run(m[2]!);
       if (!r) throw new HttpError(404, 'not found');
-      return reply(res, 200, r);
+      return reply(res, 200, {
+        ...r,
+        ...(this.runProgress.has(r.id) ? { public_progress: this.runProgress.get(r.id) } : {}),
+      });
     }
     if (u.pathname === '/api/approvals' && req.method === 'GET')
       return reply(

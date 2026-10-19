@@ -9,7 +9,7 @@ import { ArtifactStore } from '../src/os-artifacts.js';
 import { preparePackage } from '../src/packages.js';
 import { preflightBundle } from '../src/preflight.js';
 import { nodeLuaCompiler } from '../src/node-lua-compiler.js';
-import { prepare } from '../scripts/check-app-cycle.mjs';
+import { prepare } from './helpers/app-fixture.mjs';
 import {
   requireCurrentContext,
   reviewCandidate,
@@ -17,7 +17,7 @@ import {
   nativeFrameMatches,
   extractManagedContext,
   packagePayload,
-} from '../scripts/p1-app-cycle.mjs';
+} from './helpers/app-cycle.mjs';
 const hash = (x: Uint8Array | string) => createHash('sha256').update(x).digest('hex');
 const current = () => ({
   current: {

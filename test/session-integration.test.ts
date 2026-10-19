@@ -9,7 +9,7 @@ import { SessionControl } from '../src/session-control.js';
 import { managedAgentRoute } from '../src/os-agent.js';
 import { managedContext, managedRequestScope } from '../src/managed-context.js';
 import { ArtifactStore } from '../src/os-artifacts.js';
-import { MockAdapter } from '../src/adapters/mock.js';
+import { MockAdapter } from './helpers/mock-adapter.js';
 import { Hub } from '../src/hub.js';
 import { Store } from '../src/store.js';
 
@@ -151,11 +151,13 @@ test('managed voice receives the same immutable context as text and a different 
     const r = request({
       kind: 'voice',
       recording_id: 'recording',
+      reply: { mode: 'speech', voice: 'Tingting', future_hint: 'preserve' },
       session_id: 'previous',
       intent: { effect: 'application_update', target_context: 'launch_origin' },
     });
     await route(r, new AbortController().signal);
     assert.deepEqual(received[0].payload.request_context, managedContext(r));
+    assert.deepEqual(received[0].payload.reply, r.payload.input.reply);
     assert.equal(received[0].payload.managed_request_id, r.request_id);
     assert.equal(received[0].payload.session_id, 'previous');
     assert.equal(received[0].payload.request_scope, managedRequestScope(r));

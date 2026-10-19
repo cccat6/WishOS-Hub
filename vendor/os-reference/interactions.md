@@ -24,6 +24,18 @@ act on that page rather than whichever page is currently requested. Changes are
 applied at the next gesture; a held key keeps its original timing. Persistence
 does not hold the sampling lock.
 
+Input adapters can include the host's complete visible-frame context:
+`presentation_id`, `presentation_revision`, and `presentation_activation`.
+The button context comes from each physical press edge and remains attached
+through debounce, hold and release. A subsequent press observes its own frame,
+including within a multi-click sequence; `gesture_id` still identifies that
+sequence and its final `click` uses the last press context. Native touch samples
+carry the coherent visible context at acquisition. These fields report facts;
+the application chooses its input policy. The factory interaction library binds
+input at `open` and accepts later revisions of that layout while rejecting older
+layouts or a different activation. Ordinary `update` can refresh a clock without
+changing that layout binding. Legacy adapters may supply only the view id.
+
 Input while a display is busy remains `/sys/config` policy under `/sys/input`:
 `dispatch`, `queue` or `drop`. This never changes the driver's BUSY invariant.
 Queued events retain capture times; dispatch is generally appropriate for
@@ -135,3 +147,18 @@ requires the key to remain physically held at execution time.
 Example: `{id='both',event='press',chord={buttons={'A','B'},window_ms=75},
 cancel_pending={'single'}}`. A preceding single-key pattern can use
 `defer_ms=100`. Those numbers are application examples, not hardware limits.
+
+## Factory conversation reference
+
+The supplied S3 suites use hold/release for recording. On the touch display, hold
+the microphone control; on the single-button device, hold its user key. Release
+sends. A one-button double-click selects the highlighted menu operation; it does
+not start another recording. Home remains the separately configured system gesture.
+Voice / Text is a saved application preference. Speech retains readable text and
+uses the ordinary file and speaker services; synthesis belongs to the user Hub.
+Applications may provide different controls while retaining system entry and
+completion contracts. See dynamic-ui.md for media playback and package checks.
+
+## Input capability profiles
+
+Read [the input and layout contract](../../../docs/input-and-layout.md) before authoring controls. Discover each input source and actual timing. A hold-capable system voice key routes to the current claiming app or default conversation. The normal one-button profile is next / confirm / Home for single / double / triple clicks. A non-multiclick profile uses focus scanning plus single confirm. Two or more keys may bind separate semantic roles; a touchscreen adds direct activation while required operations remain reachable without touch. Keep Back as a discoverable selectable action when it has no dedicated key. The ordinary /system/lib/navigation.lua module provides bind and axis helpers. Page semantics remain application data. Never infer hardware from MCU name or synthesize absent hold/release facts.

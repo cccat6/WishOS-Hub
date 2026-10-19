@@ -116,3 +116,16 @@ ID in the managed result. Do not put large base64 images into model responses.
 Image/HTML rendering, archive extraction and large JSON/XML selection happen in
 upstream tools. Inspect target format/geometry/decoder capability before rendering;
 no fixed E6 size, palette or framebuffer assumption is valid for all devices.
+
+The system adds `/sys/apps context` to the upstream `wishos-ai/2` request. Reuse
+an accepted request_id with the same input to query/recover that task; a different
+input conflicts. A terminal duplicate is observable through the same retained
+completion interface. The stock `ai.lua` receiver retains a processed reply after
+a transient ACK refusal, retrying its acknowledgement rather than its effect.
+
+For cloud conversation controls, submit input.kind=`session_control` with an
+operation advertised by Hub (`status`, `list`, `select`, `create`, `messages`).
+Results are ordinary processed `application` actions with topic `session_control`.
+Discover the active Hub contract before using an operation. Session references
+are opaque and scoped; persist creation operation_id before an explicit create
+and reconcile an uncertain result instead of issuing a fresh creation identity.

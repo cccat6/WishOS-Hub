@@ -173,6 +173,7 @@ export function voiceRoute(
     return { ...capture, read_method: method };
   };
   const identity = (r: RemoteRequest) => {
+    r.reportProgress?.({ stage: 'receiving' });
     const id = r.payload.recording_id;
     if (typeof id !== 'string' || !id) throw Error('recording_id_required');
     return id;
@@ -219,6 +220,7 @@ export function voiceRoute(
           : {}),
         ...(r.payload.request_context ? { request_context: r.payload.request_context } : {}),
         ...(r.payload.request_scope ? { request_scope: r.payload.request_scope } : {}),
+        ...(Object.hasOwn(r.payload, 'reply') ? { reply: r.payload.reply } : {}),
       },
       signal,
     );

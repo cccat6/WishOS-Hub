@@ -3,6 +3,7 @@ import { readFile, mkdir, writeFile, rename, chmod } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
+import { TtsConfig } from '../tts.js';
 import { LocalSpeechConfig } from './speech.js';
 
 export const RuntimeKind = z.enum([
@@ -106,6 +107,7 @@ export const ConnectorConfig = z
     localToken: z.string().min(24).max(96),
     mdns: z.boolean().default(true),
     speech: LocalSpeechConfig.default({}),
+    tts: TtsConfig.default({}),
     resources: z
       .object({
         maxFileBytes: z

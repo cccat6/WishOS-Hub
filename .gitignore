@@ -15,3 +15,28 @@ __pycache__/
 build/
 
 .wrangler/
+
+# Local engineering evidence and hardware acceptance sessions
+/docs/contract-review-20261017.md
+/docs/deployment-status.json
+/docs/deployments
+/docs/engineering-corrections.md
+/docs/full-audit.md
+/docs/native-cloud-acceptance.md
+/docs/p1-app-cycle.md
+/docs/releases
+/docs/s3-local-integration.md
+/docs/terminal-handoff.md
+
+# User-host state and local captures
+connector.json
+service-secrets.json
+running.json
+*.log
+*.har
+*.mhtml
+*.adpcm
+*.wav
+*.aiff
+*.tar.gz
+*.zip

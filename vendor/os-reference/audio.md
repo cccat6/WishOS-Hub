@@ -120,3 +120,38 @@ remain explicit. The S3 factory suite selects a 30-second delivery TTL and a
 caller-sized ring; these are replaceable application policy.
 
 Capture start acceptance can precede native admission/initialization. Wait for `started` (first nonempty input frame), not just `state:starting`, before signaling readiness. Cancelling before that first frame still terminates the capture and releases its input claim. On the S3 ES7210/ES8311 composition, transient internal-memory pressure waits up to `/dev/audio.start_timeout_ms` (configurable); timeout fails the accepted operation. The native audio worker arbitrates codec/amplifier I2C and never blocks the application event loop while waiting for that bus.
+
+When `describe.chunk_read.acknowledgement_cursor` advertises `after_sequence`, pass the next sequence of the already consumed batch in the next `read_chunk`. That single call acknowledges the previous batch and fetches new data. A durable collector commits its copy first; a transient consumer may acknowledge after processing under its configured loss policy. Durability is a consumer policy, not a microphone requirement. Retrying the same acknowledged cursor does not acknowledge an unseen batch. Use the advertised maximum chunk limit and honor the actual returned count/control envelope. Keep a separate ACK path only for drivers that do not advertise a combined cursor. Do not increase buffer/TTL to conceal a collector that cannot sustain the input rate.
+
+Some adapters additionally advertise `batch_read` with `format:"wishos-audio-batch/1"`.
+Its `batch_b64` decodes to `WAB1`, a little-endian 16-bit record count, then records
+of 64-bit `sample_start`, 16-bit packet byte length and the original independent
+IMA packet. The packet's own sequence/sample metadata remains authoritative. The
+adapter truncates the batch to the control envelope and returns `offered_sequence`;
+acknowledge the complete durable batch with `after_sequence` in the next call. Verify
+all record boundaries and sample continuity before ACK. If the method is absent,
+use `read_chunk`; an unknown result is reconciled rather than retried in a different
+format.
+
+Where `/dev/mic describe.storage` is present, the native sink may accept
+`storage:"off"|"retry"|"history"`, `storage_directory`, `storage_required`, `storage_buffer_blocks`,
+`storage_max_bytes`, `storage_max_count`, `storage_on_limit:"stop_storage"|"delete_oldest"`,
+`storage_on_failure:"continue"|"stop_capture"` and `storage_timeout_ms`.
+Use only the active adapter's declared fields. Prepare/mount the selected medium
+explicitly; optional unavailable storage leaves the short RAM delivery path.
+Required storage refuses admission. Captured blocks are independently decodable;
+`stopped` is capture completion, while `stored`/`storage_failed` and storage_pending,
+durable and missing-sample fields describe archive finalization separately.
+The indexed archive supports random block retrieval without rescanning audio.
+Internal Flash is never an implicit recording fallback. Saved retry recordings
+remain explicitly managed files; a transport ACK is not a request to erase history.
+
+When advertised, `storage_directory` selects a directory relative to the selected
+storage provider's root (default `/recordings`). The native sink normalizes the
+path within that provider and freezes it when recording starts. Archive creation,
+index/metadata finalization and count/byte retention all use that same directory.
+Nested directories are created by the native storage worker. A later recording
+with a different directory does not retarget an active recording or its pending
+tail; wait for storage finalization before beginning another stored recording.
+Retention considers only validated recording groups directly within that chosen
+directory, preserving unrelated files and archives in other directories.

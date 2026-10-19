@@ -6,7 +6,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { codexUsage } from '../src/adapters/usage.js';
 import { CodexAdapter } from '../src/adapters/codex.js';
 import { RpcProcess } from '../src/adapters/rpc.js';
-import { MockAdapter } from '../src/adapters/mock.js';
+import { MockAdapter } from './helpers/mock-adapter.js';
 import { Store } from '../src/store.js';
 import { Hub } from '../src/hub.js';
 
