@@ -8,9 +8,9 @@ WishOS 管理设备运行时和硬件，Hub 管理上位服务、Harness 接入�
 
 ## 开始使用
 
-从 [Releases](https://github.com/cccat6/WishOS-Hub/releases) 下载适合系统的安装包，
-解压后打开 macOS 的 **WishOS Hub.command**、Windows 的 **WishOS Hub.cmd**，
-或在 Linux 运行 `./wishos-hub setup`。安装包包含对应平台的 Node.js 与运行依赖。
+本次预览在 [Releases](https://github.com/cccat6/WishOS-Hub/releases) 提供 **macOS Apple Silicon**
+安装包，包含 Node.js 与运行依赖。解压后打开 **WishOS Hub.command**。
+Windows、Linux 和 Intel Mac 请按下面的源码步骤运行；本次尚未验证这些平台的独立安装包。
 
 网页向导默认位于 `http://127.0.0.1:18762/`。按向导添加设备、选择运行器与会话，
 再把生成的 MCP 配置交给 Agent。设备与电脑在同一局域网时可直接通信；启用中继后，
